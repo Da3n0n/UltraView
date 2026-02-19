@@ -1,0 +1,146 @@
+{
+  "name": "dbview",
+  "displayName": "DBView – Database & Markdown File Viewer",
+  "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed.",
+  "version": "0.1.5",
+  "publisher": "Dannan",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "sqlite",
+    "database",
+    "duckdb",
+    "access",
+    "sql",
+    "markdown",
+    "viewer",
+    "preview"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "dbview.sqlite",
+        "displayName": "SQLite Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.db"
+          },
+          {
+            "filenamePattern": "*.sqlite"
+          },
+          {
+            "filenamePattern": "*.sqlite3"
+          },
+          {
+            "filenamePattern": "*.db3"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "dbview.duckdb",
+        "displayName": "DuckDB Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.duckdb"
+          },
+          {
+            "filenamePattern": "*.ddb"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "dbview.access",
+        "displayName": "Access DB Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.mdb"
+          },
+          {
+            "filenamePattern": "*.accdb"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "dbview.sqldump",
+        "displayName": "DBView: SQL Dump Viewer",
+        "selector": [
+          { "filenamePattern": "*.sql" },
+          { "filenamePattern": "*.sqlite.sql" },
+          { "filenamePattern": "*.mysql.sql" },
+          { "filenamePattern": "*.pg.sql" },
+          { "filenamePattern": "*.pgsql" },
+          { "filenamePattern": "*.dump" },
+          { "filenamePattern": "*.bak" }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "dbview.markdown",
+        "displayName": "Markdown Preview",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.mdx"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "dbview.index",
+        "displayName": "Index File Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.idx"
+          },
+          {
+            "filenamePattern": "*.index"
+          },
+          {
+            "filenamePattern": "*.ndx"
+          }
+        ],
+        "priority": "default"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "lint": "eslint src",
+    "test": "echo \"no tests\"",
+    "vsix": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/sql.js": "^1.4.9",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "copy-webpack-plugin": "^13.0.1",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.3",
+    "webpack": "^5.90.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "marked": "^11.1.1",
+    "mdb-reader": "^1.2.0",
+    "sql.js": "^1.11.0"
+  }
+}
