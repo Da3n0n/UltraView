@@ -153,24 +153,24 @@ function buildHtml(wsPath: string): string {
   .leg:hover,.leg.active{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.1))}
   .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)}
   #color-picker-popup{
-    position:fixed;display:none;flex-direction:column;gap:6px;
+    position:fixed;display:none;flex-direction:column;gap:8px;
     background:var(--vscode-editor-background,var(--vscode-sideBar-background,#1e1e1e));
     border:1px solid var(--vscode-panel-border,rgba(128,128,128,.4));
-    border-radius:6px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.4);
-    z-index:1000;min-width:180px}
-  #color-picker-popup.show{display:flex}
-  .picker-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-  .picker-row label{flex:1;font-size:11px;color:var(--vscode-editor-foreground,#ccc)}
+    border-radius:6px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.4);
+    z-index:1000;min-width:200px}
+  .picker-row{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .picker-row label{flex:1;font-size:12px;color:var(--vscode-editor-foreground,#ccc)}
   .picker-row input[type="text"]{
-    width:70px;padding:3px 6px;font-size:11px;font-family:monospace;
+    width:80px;padding:4px 8px;font-size:12px;font-family:monospace;
     background:var(--vscode-input-background,#252526);
     border:1px solid var(--vscode-input-border,rgba(128,128,128,.4));
     border-radius:3px;color:var(--vscode-input-foreground,#ccc)}
-  .color-swatches{display:flex;flex-wrap:wrap;gap:4px;max-width:170px}
-  .swatch{
-    width:22px;height:22px;border-radius:4px;cursor:pointer;
-    border:1px solid rgba(128,128,128,.3);transition:transform .1s}
-  .swatch:hover{transform:scale(1.15);border-color:rgba(255,255,255,.5)}
+  .picker-row input[type="color"]{
+    width:32px;height:32px;padding:0;border:none;cursor:pointer;
+    background:transparent;border-radius:4px}
+  .color-preview{
+    width:100%;height:30px;border-radius:4px;border:1px solid rgba(128,128,128,.3);
+    margin-bottom:6px}
   #btn-settings{
     margin-left:auto;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;
     background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));
@@ -202,11 +202,12 @@ function buildHtml(wsPath: string): string {
   <div class="leg" data-type="fn"><div class="dot" style="background:#DCDCAA"></div><span>Function</span></div>
 </div>
 <div id="color-picker-popup">
+  <div class="color-preview" id="color-preview"></div>
   <div class="picker-row">
     <label>Color</label>
     <input type="text" id="color-hex-input" maxlength="7">
+    <input type="color" id="color-native-input" value="#4EC9B0">
   </div>
-  <div class="color-swatches" id="color-swatches"></div>
 </div>
 
 <script>
@@ -652,26 +653,11 @@ document.getElementById('search').addEventListener('input', function() {
 });
 
 // Custom Color Picker
-const PRESET_COLORS = [
-  '#4EC9B0', '#9CDCFE', '#C586C0', '#DCDCAA', '#CE9178', '#6A9955',
-  '#569CD6', '#D7BA7D', '#D16969', '#C3C3C3', '#808080', '#4FC1FF',
-  '#FF79C6', '#50FA7B', '#FFB86C', '#FF5555', '#BD93F9', '#8BE9FD',
-  '#6272A4', '#F8F8F2', '#282A36', '#44475A', '#FF6E67', '#A167E6'
-];
-
 const colorPopup = document.getElementById('color-picker-popup');
 const colorHexInput = document.getElementById('color-hex-input');
-const colorSwatches = document.getElementById('color-swatches');
+const colorNativeInput = document.getElementById('color-native-input');
+const colorPreview = document.getElementById('color-preview');
 let activeColorType = null;
-
-PRESET_COLORS.forEach(color => {
-  const swatch = document.createElement('div');
-  swatch.className = 'swatch';
-  swatch.style.background = color;
-  swatch.title = color;
-  swatch.addEventListener('click', () => selectColor(color));
-  colorSwatches.appendChild(swatch);
-});
 
 function selectColor(color) {
   if (activeColorType) {
@@ -679,12 +665,18 @@ function selectColor(color) {
     const dot = document.querySelector('.leg[data-type="' + activeColorType + '"] .dot');
     if (dot) dot.style.background = color;
     colorHexInput.value = color;
+    colorNativeInput.value = color;
+    colorPreview.style.background = color;
     applyFilter();
     var colorsObj = {};
     colorsObj[activeColorType] = color;
     vscode.postMessage({ type: 'saveColors', colors: colorsObj });
   }
 }
+
+colorNativeInput.addEventListener('input', function() {
+  selectColor(this.value);
+});
 
 colorHexInput.addEventListener('input', function() {
   var val = this.value;
@@ -693,20 +685,35 @@ colorHexInput.addEventListener('input', function() {
   }
 });
 
+function showColorPopup(leg) {
+  document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
+  leg.classList.add('active');
+  const type = leg.dataset.type;
+  activeColorType = type;
+  const currentColor = COLORS[type];
+  colorHexInput.value = currentColor;
+  colorNativeInput.value = currentColor;
+  colorPreview.style.background = currentColor;
+  
+  const rect = leg.getBoundingClientRect();
+  const popupWidth = 200;
+  const popupHeight = 130;
+  
+  let left = rect.left - popupWidth + 30;
+  let top = rect.top - popupHeight - 10;
+  
+  if (left < 10) left = 10;
+  if (top < 10) top = rect.bottom + 10;
+  
+  colorPopup.style.display = 'flex';
+  colorPopup.style.left = left + 'px';
+  colorPopup.style.top = top + 'px';
+}
+
 document.querySelectorAll('.leg').forEach(leg => {
   leg.addEventListener('click', (e) => {
     e.stopPropagation();
-    document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
-    leg.classList.add('active');
-    const type = leg.dataset.type;
-    activeColorType = type;
-    const currentColor = COLORS[type];
-    colorHexInput.value = currentColor;
-    
-    const rect = leg.getBoundingClientRect();
-    colorPopup.style.display = 'flex';
-    colorPopup.style.top = (rect.top - 160) + 'px';
-    colorPopup.style.left = (rect.left - 20) + 'px';
+    showColorPopup(leg);
   });
 });
 
@@ -715,6 +722,11 @@ document.addEventListener('click', (e) => {
     colorPopup.style.display = 'none';
     document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
   }
+});
+
+window.addEventListener('resize', () => {
+  colorPopup.style.display = 'none';
+  document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
 });
 
 // Settings button
