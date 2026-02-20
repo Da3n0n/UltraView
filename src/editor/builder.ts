@@ -16,6 +16,7 @@ export function buildEditorPage(_webview: vscode.Webview): string {
 ${styles}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown-browser.js"></script>
 </head>
 <body>
 ${html}

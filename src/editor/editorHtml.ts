@@ -13,7 +13,8 @@ export function getEditorStyles(): string {
   --toolbar-bg: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
   --radius: 6px;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
+*:focus { outline: none; }
 html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
 
 #app { display: flex; flex-direction: column; height: 100vh; }
@@ -32,9 +33,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   width: 28px; height: 28px; background: transparent;
   border: none; border-radius: 4px; cursor: pointer;
   color: var(--text); font-size: 14px; transition: background 0.15s;
+  outline: none;
 }
 .toolbar-btn:hover { background: var(--surface2); }
-.toolbar-btn:active { background: var(--border); }
+.toolbar-btn:active, .toolbar-btn:focus { background: var(--border); outline: none; border: none; }
 .toolbar-btn.active { background: var(--surface2); color: var(--accent); }
 
 .toolbar-select {
@@ -54,12 +56,22 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   background: var(--bg); color: var(--text);
   font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
   font-size: 14px; line-height: 1.7; padding: 20px;
-  outline: none; tab-size: 2;
+  outline: none; tab-size: 2; caret-color: var(--text);
 }
+
+#editor:focus { outline: none; border: none; }
 
 #preview {
   flex: 1; width: 100%; overflow-y: auto; padding: 20px 40px 80px;
+  outline: none; caret-color: var(--text);
 }
+
+#preview:focus { outline: none; border: none; }
+
+.edit-only .editor-pane:first-child { flex: 1 1 100%; }
+.edit-only .editor-pane:last-child { display: none !important; }
+.preview-only .editor-pane:first-child { display: none !important; }
+.preview-only .editor-pane:last-child { flex: 1 1 100%; }
 
 .split .editor-pane:first-child { border-right: 1px solid var(--border); }
 
@@ -165,8 +177,8 @@ export function getEditorHtml(): string {
     <div class="toolbar-group" style="margin-left: auto;">
       <select class="toolbar-select" id="view-mode">
         <option value="split">Split View</option>
-        <option value="edit">Edit Only</option>
-        <option value="preview">Preview Only</option>
+        <option value="edit">RAW</option>
+        <option value="preview">RICH</option>
       </select>
     </div>
   </div>

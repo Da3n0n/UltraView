@@ -10,17 +10,51 @@ export function getEditorScript(): string {
 
   let saveTimeout = null;
   let content = '';
+  let isSyncing = false;
+
+  function htmlToMarkdown(html) {
+    if (typeof TurndownService !== 'undefined') {
+      const turndown = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+      return turndown.turndown(html);
+    }
+    return html.replace(/<br\\s*\\/?>/gi, '\\n')
+               .replace(/<p>/gi, '').replace(/<\\/p>/gi, '\\n\\n')
+               .replace(/<h1>/gi, '# ').replace(/<\\/h1>/gi, '\\n')
+               .replace(/<h2>/gi, '## ').replace(/<\\/h2>/gi, '\\n')
+               .replace(/<h3>/gi, '### ').replace(/<\\/h3>/gi, '\\n')
+               .replace(/<strong>/gi, '**').replace(/<\\/strong>/gi, '**')
+               .replace(/<b>/gi, '**').replace(/<\\/b>/gi, '**')
+               .replace(/<em>/gi, '*').replace(/<\\/em>/gi, '*')
+               .replace(/<i>/gi, '*').replace(/<\\/i>/gi, '*')
+               .replace(/<code>/gi, '\`').replace(/<\\/code>/gi, '\`')
+               .replace(/<a href="([^"]+)">/gi, '[').replace(/<\\/a>/gi, ']($1)')
+               .replace(/<li>/gi, '- ').replace(/<\\/li>/gi, '\\n')
+               .replace(/<[^>]+>/g, '');
+  }
 
   function updatePreview() {
+    if (isSyncing) return;
+    isSyncing = true;
     content = editor.value;
     preview.innerHTML = marked.parse(content);
     updateStats();
+    isSyncing = false;
+  }
+
+  function updateRawFromPreview() {
+    if (isSyncing) return;
+    isSyncing = true;
+    content = htmlToMarkdown(preview.innerHTML);
+    editor.value = content;
+    updateStats();
+    isSyncing = false;
   }
 
   function updateStats() {
-    const lines = content.split('\\n').length;
-    const words = content.trim() ? content.trim().split(/\\s+/).length : 0;
-    const chars = content.length;
+    const mdContent = editor.value;
+    const lines = mdContent.split('\\n').length;
+    const words = mdContent.trim() ? mdContent.trim().split(/\\s+/).length : 0;
+    const chars = mdContent.length;
     document.getElementById('stat-lines').textContent = 'Lines: ' + lines;
     document.getElementById('stat-words').textContent = 'Words: ' + words;
     document.getElementById('stat-chars').textContent = 'Chars: ' + chars;
@@ -121,6 +155,11 @@ export function getEditorScript(): string {
     autoSave();
   });
 
+  preview.addEventListener('input', () => {
+    updateRawFromPreview();
+    autoSave();
+  });
+
   editor.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey) {
       switch(e.key.toLowerCase()) {
@@ -135,19 +174,47 @@ export function getEditorScript(): string {
     }
   });
 
+  preview.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      switch(e.key.toLowerCase()) {
+        case 'b': 
+          e.preventDefault(); 
+          document.execCommand('bold');
+          updateRawFromPreview();
+          autoSave();
+          break;
+        case 'i': 
+          e.preventDefault(); 
+          document.execCommand('italic');
+          updateRawFromPreview();
+          autoSave();
+          break;
+        case 's': 
+          e.preventDefault(); 
+          save(); 
+          break;
+      }
+    }
+  });
+
   viewMode.addEventListener('change', () => {
     wrap.className = 'editor-wrap ' + viewMode.value;
     const editPane = document.getElementById('edit-pane');
     const previewPane = document.getElementById('preview-pane');
+    
+    editPane.classList.remove('visible');
+    previewPane.classList.remove('visible');
+    
     if (viewMode.value === 'split') {
       editPane.classList.add('visible');
       previewPane.classList.add('visible');
+      preview.contentEditable = 'true';
     } else if (viewMode.value === 'edit') {
       editPane.classList.add('visible');
-      previewPane.classList.remove('visible');
+      preview.contentEditable = 'false';
     } else {
-      editPane.classList.remove('visible');
       previewPane.classList.add('visible');
+      preview.contentEditable = 'true';
     }
   });
 
@@ -159,6 +226,7 @@ export function getEditorScript(): string {
     }
   });
 
+  preview.contentEditable = 'true';
   vscode.postMessage({ type: 'ready' });
 })();`;
 
