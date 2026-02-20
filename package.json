@@ -3,7 +3,7 @@
   "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.1",
+  "version": "0.2.7",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
@@ -165,7 +165,7 @@
     "url": "https://github.com/Da3n0n/UltraView.git"
   },
   "scripts": {
-    "vscode:prepublish": "npm run package",
+    "vscode:prepublish": "npm run compile",
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "npm run bump-and-package",
