@@ -1,9 +1,9 @@
 {
   "name": "ultraview",
-    "icon": "images/icon.png",
+  "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
@@ -20,7 +20,7 @@
     "sql",
     "markdown",
     "viewer",
-    "preview",  
+    "preview",
     "nodes",
     "visualization"
   ],
@@ -57,10 +57,18 @@
         "viewType": "ultraview.sqlite",
         "displayName": "SQLite Viewer",
         "selector": [
-          { "filenamePattern": "*.db" },
-          { "filenamePattern": "*.sqlite" },
-          { "filenamePattern": "*.sqlite3" },
-          { "filenamePattern": "*.db3" }
+          {
+            "filenamePattern": "*.db"
+          },
+          {
+            "filenamePattern": "*.sqlite"
+          },
+          {
+            "filenamePattern": "*.sqlite3"
+          },
+          {
+            "filenamePattern": "*.db3"
+          }
         ],
         "priority": "default"
       },
@@ -68,8 +76,12 @@
         "viewType": "ultraview.duckdb",
         "displayName": "DuckDB Viewer",
         "selector": [
-          { "filenamePattern": "*.duckdb" },
-          { "filenamePattern": "*.ddb" }
+          {
+            "filenamePattern": "*.duckdb"
+          },
+          {
+            "filenamePattern": "*.ddb"
+          }
         ],
         "priority": "default"
       },
@@ -77,8 +89,12 @@
         "viewType": "ultraview.access",
         "displayName": "Access DB Viewer",
         "selector": [
-          { "filenamePattern": "*.mdb" },
-          { "filenamePattern": "*.accdb" }
+          {
+            "filenamePattern": "*.mdb"
+          },
+          {
+            "filenamePattern": "*.accdb"
+          }
         ],
         "priority": "default"
       },
@@ -86,13 +102,27 @@
         "viewType": "ultraview.sqldump",
         "displayName": "Ultraview: SQL Dump Viewer",
         "selector": [
-          { "filenamePattern": "*.sql" },
-          { "filenamePattern": "*.sqlite.sql" },
-          { "filenamePattern": "*.mysql.sql" },
-          { "filenamePattern": "*.pg.sql" },
-          { "filenamePattern": "*.pgsql" },
-          { "filenamePattern": "*.dump" },
-          { "filenamePattern": "*.bak" }
+          {
+            "filenamePattern": "*.sql"
+          },
+          {
+            "filenamePattern": "*.sqlite.sql"
+          },
+          {
+            "filenamePattern": "*.mysql.sql"
+          },
+          {
+            "filenamePattern": "*.pg.sql"
+          },
+          {
+            "filenamePattern": "*.pgsql"
+          },
+          {
+            "filenamePattern": "*.dump"
+          },
+          {
+            "filenamePattern": "*.bak"
+          }
         ],
         "priority": "default"
       },
@@ -100,9 +130,15 @@
         "viewType": "ultraview.markdown",
         "displayName": "Markdown Preview",
         "selector": [
-          { "filenamePattern": "*.md" },
-          { "filenamePattern": "*.mdx" },
-          { "filenamePattern": "*.markdown" }
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.mdx"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
         ],
         "priority": "default"
       },
@@ -110,9 +146,15 @@
         "viewType": "ultraview.index",
         "displayName": "Index File Viewer",
         "selector": [
-          { "filenamePattern": "*.idx" },
-          { "filenamePattern": "*.index" },
-          { "filenamePattern": "*.ndx" }
+          {
+            "filenamePattern": "*.idx"
+          },
+          {
+            "filenamePattern": "*.index"
+          },
+          {
+            "filenamePattern": "*.ndx"
+          }
         ],
         "priority": "default"
       }
@@ -127,6 +169,9 @@
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
+    "bump-patch": "npm version patch --no-git-tag-version",
+    "bump-minor": "npm version minor --no-git-tag-version",
+    "bump-and-package": "npm run bump-patch && npm run vsix",
     "lint": "eslint src",
     "test": "echo \"no tests\"",
     "vsix": "vsce package --no-dependencies",
