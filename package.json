@@ -1,7 +1,9 @@
 {
-  "name": "dbview",
-  "displayName": "DBView – Database & Markdown File Viewer",
-  "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed.",
+  "name": "ultraview",
+  "name": "ultraview",
+    "icon": "images/icon.png",
+  "displayName": "Ultraview – Database & Markdown File Viewer",
+  "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
   "version": "0.2.0",
   "publisher": "Dannan",
   "engines": {
@@ -19,7 +21,9 @@
     "sql",
     "markdown",
     "viewer",
-    "preview"
+    "preview",  
+    "nodes",
+    "visualization"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
@@ -27,35 +31,35 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "dbview-graph",
+          "id": "ultraview-graph",
           "title": "Code Graph",
           "icon": "$(type-hierarchy)"
-        {
+        }
       ]
-          "repository": {
-            "type": "git",
-            "url": "https://github.com/Da3n0n/DBview.git"
-          },
+    },
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/Da3n0n/UltraView.git"
     },
     "views": {
-      "dbview-graph": [
+      "ultraview-graph": [
         {
           "type": "webview",
-          "id": "dbview.codeGraph",
+          "id": "ultraview.codeGraph",
           "name": "Code Graph"
-        }
+        }   
       ]
     },
     "commands": [
       {
-        "command": "dbview.openCodeGraph",
-        "title": "DBView: Open Code Graph as Editor",
+        "command": "ultraview.openCodeGraph",
+        "title": "Ultraview: Open Code Graph as Editor",
         "icon": "$(type-hierarchy)"
       }
     ],
     "customEditors": [
       {
-        "viewType": "dbview.sqlite",
+        "viewType": "ultraview.sqlite",
         "displayName": "SQLite Viewer",
         "selector": [
           {
@@ -74,7 +78,7 @@
         "priority": "default"
       },
       {
-        "viewType": "dbview.duckdb",
+        "viewType": "ultraview.duckdb",
         "displayName": "DuckDB Viewer",
         "selector": [
           {
@@ -87,7 +91,7 @@
         "priority": "default"
       },
       {
-        "viewType": "dbview.access",
+        "viewType": "ultraview.access",
         "displayName": "Access DB Viewer",
         "selector": [
           {
@@ -100,8 +104,8 @@
         "priority": "default"
       },
       {
-        "viewType": "dbview.sqldump",
-        "displayName": "DBView: SQL Dump Viewer",
+        "viewType": "ultraview.sqldump",
+        "displayName": "Ultraview: SQL Dump Viewer",
         "selector": [
           {
             "filenamePattern": "*.sql"
@@ -128,7 +132,7 @@
         "priority": "default"
       },
       {
-        "viewType": "dbview.markdown",
+        "viewType": "ultraview.markdown",
         "displayName": "Markdown Preview",
         "selector": [
           {
@@ -144,7 +148,7 @@
         "priority": "default"
       },
       {
-        "viewType": "dbview.index",
+        "viewType": "ultraview.index",
         "displayName": "Index File Viewer",
         "selector": [
           {

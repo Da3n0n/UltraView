@@ -10,32 +10,32 @@ import { CodeGraphProvider } from './providers/codeGraphProvider';
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
-      'dbview.sqlite',
+      'ultraview.sqlite',
       new SqliteProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
-      'dbview.duckdb',
+      'ultraview.duckdb',
       new DuckDbProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
-      'dbview.access',
+      'ultraview.access',
       new AccessProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
-      'dbview.sqldump',
+      'ultraview.sqldump',
       new SqlDumpProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
-      'dbview.markdown',
+      'ultraview.markdown',
       new MarkdownProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
-      'dbview.index',
+      'ultraview.index',
       new IndexProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
       new CodeGraphProvider(context),
       { webviewOptions: { retainContextWhenHidden: true } }
     ),
-    vscode.commands.registerCommand('dbview.openCodeGraph', () => {
+    vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
       CodeGraphProvider.openAsPanel(context);
     })
   );

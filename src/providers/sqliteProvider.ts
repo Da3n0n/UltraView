@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { buildDbHtml } from '../webview/dbView';
+import { buildDbHtml } from '../webview/ultraview';
 import type { SqlJsStatic, Database } from 'sql.js';
 
 let SQL: SqlJsStatic | null = null;
