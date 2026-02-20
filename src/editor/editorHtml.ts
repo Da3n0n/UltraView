@@ -43,8 +43,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   height: 28px; padding: 0 8px; background: var(--surface2);
   border: 1px solid var(--border); border-radius: 4px;
   color: var(--text); font-size: 12px; cursor: pointer;
+  outline: none;
 }
-.toolbar-select:hover { border-color: var(--accent); }
+.toolbar-select:hover, .toolbar-select:focus { border-color: var(--accent); outline: none; }
 
 .editor-wrap { flex: 1; display: flex; overflow: hidden; position: relative; min-height: 0; }
 .editor-pane { flex: 1 1 50%; display: none; overflow: hidden; min-width: 0; }
