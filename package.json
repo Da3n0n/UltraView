@@ -30,8 +30,12 @@
           "id": "dbview-graph",
           "title": "Code Graph",
           "icon": "$(type-hierarchy)"
-        }
+        {
       ]
+          "repository": {
+            "type": "git",
+            "url": "https://github.com/Da3n0n/DBview.git"
+          },
     },
     "views": {
       "dbview-graph": [
