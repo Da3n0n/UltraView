@@ -144,15 +144,33 @@ function buildHtml(wsPath: string): string {
   @keyframes spin{to{transform:rotate(360deg)}}
   #legend{
     position:fixed;bottom:28px;right:8px;display:flex;flex-direction:column;
-    gap:6px;font-size:11px;color:var(--vscode-descriptionForeground);
+    gap:4px;font-size:11px;color:var(--vscode-descriptionForeground);
     background:var(--vscode-sideBar-background,rgba(30,30,30,.9));
-    padding:10px 12px;border-radius:8px;
+    padding:8px;border-radius:8px;
     border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
-    min-width:140px}
-  .leg{display:flex;align-items:center;gap:8px;cursor:pointer;padding:3px 5px;border-radius:4px}
-  .leg:hover{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.08))}
-  .dot{width:16px;height:16px;border-radius:50%;flex-shrink:0;border:2px solid rgba(255,255,255,.2)}
-  .color-input{position:absolute;opacity:0;width:0;height:0}
+    min-width:130px}
+  .leg{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:4px}
+  .leg:hover,.leg.active{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.1))}
+  .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)}
+  #color-picker-popup{
+    position:fixed;display:none;flex-direction:column;gap:6px;
+    background:var(--vscode-editor-background,var(--vscode-sideBar-background,#1e1e1e));
+    border:1px solid var(--vscode-panel-border,rgba(128,128,128,.4));
+    border-radius:6px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.4);
+    z-index:1000;min-width:180px}
+  #color-picker-popup.show{display:flex}
+  .picker-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .picker-row label{flex:1;font-size:11px;color:var(--vscode-editor-foreground,#ccc)}
+  .picker-row input[type="text"]{
+    width:70px;padding:3px 6px;font-size:11px;font-family:monospace;
+    background:var(--vscode-input-background,#252526);
+    border:1px solid var(--vscode-input-border,rgba(128,128,128,.4));
+    border-radius:3px;color:var(--vscode-input-foreground,#ccc)}
+  .color-swatches{display:flex;flex-wrap:wrap;gap:4px;max-width:170px}
+  .swatch{
+    width:22px;height:22px;border-radius:4px;cursor:pointer;
+    border:1px solid rgba(128,128,128,.3);transition:transform .1s}
+  .swatch:hover{transform:scale(1.15);border-color:rgba(255,255,255,.5)}
   #btn-settings{
     margin-left:auto;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;
     background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));
@@ -182,7 +200,13 @@ function buildHtml(wsPath: string): string {
   <div class="leg" data-type="other"><div class="dot" style="background:#9CDCFE"></div><span>JavaScript</span></div>
   <div class="leg" data-type="md"><div class="dot" style="background:#C586C0"></div><span>Markdown</span></div>
   <div class="leg" data-type="fn"><div class="dot" style="background:#DCDCAA"></div><span>Function</span></div>
-  <input type="color" class="color-input" id="color-picker">
+</div>
+<div id="color-picker-popup">
+  <div class="picker-row">
+    <label>Color</label>
+    <input type="text" id="color-hex-input" maxlength="7">
+  </div>
+  <div class="color-swatches" id="color-swatches"></div>
 </div>
 
 <script>
@@ -627,28 +651,69 @@ document.getElementById('search').addEventListener('input', function() {
   applyFilter();
 });
 
-// Color picker
-const colorPicker = document.getElementById('color-picker');
+// Custom Color Picker
+const PRESET_COLORS = [
+  '#4EC9B0', '#9CDCFE', '#C586C0', '#DCDCAA', '#CE9178', '#6A9955',
+  '#569CD6', '#D7BA7D', '#D16969', '#C3C3C3', '#808080', '#4FC1FF',
+  '#FF79C6', '#50FA7B', '#FFB86C', '#FF5555', '#BD93F9', '#8BE9FD',
+  '#6272A4', '#F8F8F2', '#282A36', '#44475A', '#FF6E67', '#A167E6'
+];
+
+const colorPopup = document.getElementById('color-picker-popup');
+const colorHexInput = document.getElementById('color-hex-input');
+const colorSwatches = document.getElementById('color-swatches');
 let activeColorType = null;
 
+PRESET_COLORS.forEach(color => {
+  const swatch = document.createElement('div');
+  swatch.className = 'swatch';
+  swatch.style.background = color;
+  swatch.title = color;
+  swatch.addEventListener('click', () => selectColor(color));
+  colorSwatches.appendChild(swatch);
+});
+
+function selectColor(color) {
+  if (activeColorType) {
+    COLORS[activeColorType] = color;
+    const dot = document.querySelector('.leg[data-type="' + activeColorType + '"] .dot');
+    if (dot) dot.style.background = color;
+    colorHexInput.value = color;
+    applyFilter();
+    var colorsObj = {};
+    colorsObj[activeColorType] = color;
+    vscode.postMessage({ type: 'saveColors', colors: colorsObj });
+  }
+}
+
+colorHexInput.addEventListener('input', function() {
+  var val = this.value;
+  if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+    selectColor(val);
+  }
+});
+
 document.querySelectorAll('.leg').forEach(leg => {
-  leg.addEventListener('click', () => {
+  leg.addEventListener('click', (e) => {
+    e.stopPropagation();
+    document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
+    leg.classList.add('active');
     const type = leg.dataset.type;
     activeColorType = type;
-    colorPicker.value = COLORS[type];
-    colorPicker.click();
+    const currentColor = COLORS[type];
+    colorHexInput.value = currentColor;
+    
+    const rect = leg.getBoundingClientRect();
+    colorPopup.style.display = 'flex';
+    colorPopup.style.top = (rect.top - 160) + 'px';
+    colorPopup.style.left = (rect.left - 20) + 'px';
   });
 });
 
-colorPicker.addEventListener('input', function() {
-  if (activeColorType && this.value) {
-    COLORS[activeColorType] = this.value;
-    const dot = document.querySelector('.leg[data-type="' + activeColorType + '"] .dot');
-    if (dot) dot.style.background = this.value;
-    applyFilter();
-    var colorsObj = {};
-    colorsObj[activeColorType] = this.value;
-    vscode.postMessage({ type: 'saveColors', colors: colorsObj });
+document.addEventListener('click', (e) => {
+  if (!colorPopup.contains(e.target) && !e.target.closest('.leg')) {
+    colorPopup.style.display = 'none';
+    document.querySelectorAll('.leg').forEach(l => l.classList.remove('active'));
   }
 });
 

@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 export interface CodeGraphSettings {
   nodeSize: number;
   fontSize: number;
@@ -31,5 +33,15 @@ export const defaultCodeGraphSettings: CodeGraphSettings = {
 };
 
 export function getCodeGraphSettings(): CodeGraphSettings {
-  return { ...defaultCodeGraphSettings };
+  const config = vscode.workspace.getConfiguration('ultraview.codeGraph');
+  return {
+    nodeSize: config.get('nodeSize', defaultCodeGraphSettings.nodeSize),
+    fontSize: config.get('fontSize', defaultCodeGraphSettings.fontSize),
+    showLabels: config.get('showLabels', defaultCodeGraphSettings.showLabels),
+    layoutDirection: config.get('layoutDirection', defaultCodeGraphSettings.layoutDirection) as 'horizontal' | 'vertical' | 'radial',
+    clusterBy: config.get('clusterBy', defaultCodeGraphSettings.clusterBy) as 'file' | 'folder' | 'none',
+    showImports: config.get('showImports', defaultCodeGraphSettings.showImports),
+    showExports: config.get('showExports', defaultCodeGraphSettings.showExports),
+    nodeColors: defaultCodeGraphSettings.nodeColors
+  };
 }

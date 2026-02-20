@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 export type MarkdownStyle = 'obsidian' | 'github';
 
 export interface MarkdownSettings {
@@ -21,5 +23,14 @@ export const defaultMarkdownSettings: MarkdownSettings = {
 };
 
 export function getMarkdownSettings(): MarkdownSettings {
-  return { ...defaultMarkdownSettings };
+  const config = vscode.workspace.getConfiguration('ultraview.markdown');
+  return {
+    defaultView: config.get('defaultView', defaultMarkdownSettings.defaultView) as 'split' | 'edit' | 'preview',
+    style: config.get('style', defaultMarkdownSettings.style) as MarkdownStyle,
+    autoSave: config.get('autoSave', defaultMarkdownSettings.autoSave),
+    autoSaveDelay: config.get('autoSaveDelay', defaultMarkdownSettings.autoSaveDelay),
+    fontSize: config.get('fontSize', defaultMarkdownSettings.fontSize),
+    showStatusBar: config.get('showStatusBar', defaultMarkdownSettings.showStatusBar),
+    wordWrap: config.get('wordWrap', defaultMarkdownSettings.wordWrap)
+  };
 }
