@@ -1,6 +1,8 @@
 # ✨ Ultraview – Your Instant Database & Markdown Explorer
 
-[![Version](https://img.shields.io/visual-studio-marketplace/v/Dannan.ultraview.svg)](https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview)
+[![Version](https://img.shields.io/visual-studio-marketplace/v/Dannan.ultraview.svg)] 
+
+(https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/Dannan.ultraview.svg)](https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview)
 
 **Ultraview** is the ultimate lightweight file explorer for **VS Code**, **Cursor**, **Windsurf**, and any compatible editor. Use it to preview **Databases**, **SQL Dumps**, and **Markdown** files instantly—just click and view! 🚀
