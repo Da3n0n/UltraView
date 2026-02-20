@@ -1,3 +1,5 @@
+import * as vscode from 'vscode';
+
 export interface DatabaseViewSettings {
   pageSize: number;
   showRowNumbers: boolean;
@@ -19,5 +21,14 @@ export const defaultDatabaseViewSettings: DatabaseViewSettings = {
 };
 
 export function getDatabaseViewSettings(): DatabaseViewSettings {
-  return { ...defaultDatabaseViewSettings };
+  const config = vscode.workspace.getConfiguration('ultraview.database');
+  return {
+    pageSize: config.get('pageSize', defaultDatabaseViewSettings.pageSize),
+    showRowNumbers: config.get('showRowNumbers', defaultDatabaseViewSettings.showRowNumbers),
+    maxColumnWidth: config.get('maxColumnWidth', defaultDatabaseViewSettings.maxColumnWidth),
+    nullDisplay: config.get('nullDisplay', defaultDatabaseViewSettings.nullDisplay),
+    dateFormat: config.get('dateFormat', defaultDatabaseViewSettings.dateFormat),
+    showSqlToolbar: config.get('showSqlToolbar', defaultDatabaseViewSettings.showSqlToolbar),
+    autoQueryLimit: config.get('autoQueryLimit', defaultDatabaseViewSettings.autoQueryLimit)
+  };
 }
