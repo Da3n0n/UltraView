@@ -1,4 +1,4 @@
-# ✨ Ultraview – Your Instant Database &amp; Markdown Explorer
+# ✨ Ultraview – Node graph for Code and Markdown in your project wiht rihg markdown editor right in your IDE 
 
 [] 
 
