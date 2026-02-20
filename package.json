@@ -2,7 +2,7 @@
   "name": "dbview",
   "displayName": "DBView – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed.",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "publisher": "Dannan",
   "engines": {
     "vscode": "^1.85.0"
@@ -99,13 +99,27 @@
         "viewType": "dbview.sqldump",
         "displayName": "DBView: SQL Dump Viewer",
         "selector": [
-          { "filenamePattern": "*.sql" },
-          { "filenamePattern": "*.sqlite.sql" },
-          { "filenamePattern": "*.mysql.sql" },
-          { "filenamePattern": "*.pg.sql" },
-          { "filenamePattern": "*.pgsql" },
-          { "filenamePattern": "*.dump" },
-          { "filenamePattern": "*.bak" }
+          {
+            "filenamePattern": "*.sql"
+          },
+          {
+            "filenamePattern": "*.sqlite.sql"
+          },
+          {
+            "filenamePattern": "*.mysql.sql"
+          },
+          {
+            "filenamePattern": "*.pg.sql"
+          },
+          {
+            "filenamePattern": "*.pgsql"
+          },
+          {
+            "filenamePattern": "*.dump"
+          },
+          {
+            "filenamePattern": "*.bak"
+          }
         ],
         "priority": "default"
       },
