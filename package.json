@@ -168,7 +168,7 @@
     "vscode:prepublish": "npm run package",
     "compile": "webpack",
     "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
+    "package": "npm run bump-and-package",
     "bump-patch": "npm version patch --no-git-tag-version",
     "bump-minor": "npm version minor --no-git-tag-version",
     "bump-and-package": "npm run bump-patch && npm run vsix",
