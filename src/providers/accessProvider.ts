@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import { buildDbHtml } from '../webview/dbView';
+import { buildDbHtml } from '../webview/ultraview';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const MDBReader = require('mdb-reader');

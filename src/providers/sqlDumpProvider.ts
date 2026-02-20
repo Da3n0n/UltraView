@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import { buildDbHtml } from '../webview/dbView';
+import { buildDbHtml } from '../webview/ultraview';
 
 interface ParsedTable {
   name: string;

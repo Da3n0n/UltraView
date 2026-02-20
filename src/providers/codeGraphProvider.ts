@@ -632,7 +632,7 @@ vscode.postMessage({ type: 'ready', showFns: false });
 // ─── WebviewViewProvider (Sidebar) ───────────────────────────────────────────
 
 export class CodeGraphProvider implements vscode.WebviewViewProvider {
-  public static readonly viewId = 'dbview.codeGraph';
+  public static readonly viewId = 'ultraview.codeGraph';
   private _view?: vscode.WebviewView;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {}
@@ -654,7 +654,7 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
   // Called by command to open as full editor panel
   static openAsPanel(ctx: vscode.ExtensionContext): void {
     const panel = vscode.window.createWebviewPanel(
-      'dbview.codeGraphPanel',
+      'ultraview.codeGraphPanel',
       'Code Graph',
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true }
@@ -681,7 +681,7 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
         openFile(msg.path as string);
         break;
       case 'openPanel':
-        vscode.commands.executeCommand('dbview.openCodeGraph');
+        vscode.commands.executeCommand('ultraview.openCodeGraph');
         break;
     }
   }
