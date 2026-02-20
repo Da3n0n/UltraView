@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildCodeGraph } from '../codenode';
 import { defaultCodeGraphSettings } from '../settings';
+import { colorPickerStyle, colorPickerScript } from '../ui/colorPicker';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ interface GraphData {
 
 const IMPORT_RE = /(?:import|require)\s*(?:[^'"]*from\s*)?['"]([^'"]+)['"]/g;
 const WIKILINK_RE = /\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]/g;
-const MDLINK_RE  = /\[(?:[^\]]*)\]\(([^)]+)\)/g;
+const MDLINK_RE = /\[(?:[^\]]*)\]\(([^)]+)\)/g;
 const FN_RE = /export\s+(?:async\s+)?(?:function|class)\s+(\w+)|export\s+const\s+(\w+)\s*[=:]/g;
 
 function resolveImport(fromFile: string, imp: string, allFiles: Set<string>): string | null {
@@ -68,7 +69,7 @@ async function buildGraph(includeFns: boolean): Promise<GraphData> {
   const nodes: GNode[] = cg.nodes.map(n => ({
     id: n.id,
     label: n.label,
-    type: n.type === 'fn' ? 'fn' : n.type === 'md' ? 'md' : n.type === 'db' ? 'other' : (['ts','js','tsx','jsx'].includes(n.type) ? 'ts' : 'other'),
+    type: n.type === 'fn' ? 'fn' : n.type === 'md' ? 'md' : n.type === 'db' ? 'other' : (['ts', 'js', 'tsx', 'jsx'].includes(n.type) ? 'ts' : 'other'),
     filePath: n.filePath ?? '',
     parentId: (n.meta && typeof n.meta.parent === 'string') ? n.meta.parent : undefined
   }));
@@ -153,6 +154,7 @@ function buildHtml(wsPath: string): string {
   .leg:hover{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.1))}
   .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)}
   #btn-settings{margin-left:auto;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));border:1px solid var(--vscode-panel-border,rgba(128,128,128,.3));color:var(--vscode-editor-foreground)}
+  ${colorPickerStyle}
 </style>
 </head>
 <body>
@@ -181,6 +183,7 @@ function buildHtml(wsPath: string): string {
 
 
 <script>
+${colorPickerScript}
 (function(){
 'use strict';
 
@@ -624,7 +627,9 @@ document.getElementById('search').addEventListener('input', function() {
   applyFilter();
 });
 
-// Color picker - click dot to open native picker next to it
+// Color picker
+var activeColorPicker = null;
+
 document.querySelectorAll('.leg .dot').forEach(dot => {
   dot.style.cursor = 'pointer';
   dot.addEventListener('click', function(e) {
@@ -632,49 +637,29 @@ document.querySelectorAll('.leg .dot').forEach(dot => {
     var leg = dot.closest('.leg');
     var type = leg.dataset.type;
     
-    // Remove if already exists
-    var existing = document.getElementById('native-color-picker');
-    if (existing) existing.remove();
+    if (activeColorPicker) {
+      activeColorPicker.destroy();
+    }
     
-    // Create native input
-    var input = document.createElement('input');
-    input.type = 'color';
-    input.id = 'native-color-picker';
-    input.value = COLORS[type] || '#ffffff';
-    
-    // Position it as an overlay right next to the clicked legend item
-    input.style.position = 'absolute';
-    input.style.left = '0';
-    input.style.top = '0';
-    input.style.width = '100%';
-    input.style.height = '100%';
-    input.style.opacity = '0';
-    input.style.cursor = 'pointer';
-    input.style.zIndex = '100';
-
-    leg.style.position = 'relative'; // Ensure absolute positioning is relative to the legend item
-    leg.appendChild(input);
-
-    input.addEventListener('input', function(ev) {
-      var color = ev.target.value;
-      COLORS[type] = color;
-      dot.style.background = color;
-      applyFilter();
-      
-      // Save color to VS Code settings
-      var colorsObj = {};
-      colorsObj[type] = color;
-      vscode.postMessage({ type: 'saveColors', colors: colorsObj });
-    });
-    
-    // Click it to open the native OS dialog
-    input.click();
-    
-    // Cleanup afterwards
-    input.addEventListener('change', function() {
-      input.remove();
+    activeColorPicker = createColorPicker(document.body, {
+      value: COLORS[type],
+      onChange: function(color) {
+        COLORS[type] = color;
+        dot.style.background = color;
+        applyFilter();
+        var colorsObj = {};
+        colorsObj[type] = color;
+        vscode.postMessage({ type: 'saveColors', colors: colorsObj });
+      }
     });
   });
+});
+
+document.addEventListener('click', function(e) {
+  if (activeColorPicker && !e.target.closest('.leg') && !e.target.closest('.color-picker-popup')) {
+    activeColorPicker.destroy();
+    activeColorPicker = null;
+  }
 });
 
 // Settings button
@@ -715,7 +700,7 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'ultraview.codeGraph';
   private _view?: vscode.WebviewView;
 
-  constructor(private readonly ctx: vscode.ExtensionContext) {}
+  constructor(private readonly ctx: vscode.ExtensionContext) { }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -772,17 +757,17 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _saveColors(colors: Record<string, string>): void {
+  private async _saveColors(colors: Record<string, string>): Promise<void> {
     const config = vscode.workspace.getConfiguration('ultraview');
-    const currentColors = config.get<Record<string, string>>('codeGraph.nodeColors') 
+    const currentColors = config.get<Record<string, string>>('codeGraph.nodeColors')
       || { ...defaultCodeGraphSettings.nodeColors };
     const mergedColors = { ...currentColors, ...colors };
-    config.update('codeGraph.nodeColors', mergedColors, vscode.ConfigurationTarget.Global);
+    await config.update('codeGraph.nodeColors', mergedColors, vscode.ConfigurationTarget.Global);
   }
 
   private _loadColors(): Record<string, string> {
     const config = vscode.workspace.getConfiguration('ultraview');
-    return config.get<Record<string, string>>('codeGraph.nodeColors') 
+    return config.get<Record<string, string>>('codeGraph.nodeColors')
       || { ...defaultCodeGraphSettings.nodeColors };
   }
 }
@@ -791,7 +776,7 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
 
 function getColors(): Record<string, string> {
   const config = vscode.workspace.getConfiguration('ultraview');
-  return config.get<Record<string, string>>('codeGraph.nodeColors') 
+  return config.get<Record<string, string>>('codeGraph.nodeColors')
     || { ...defaultCodeGraphSettings.nodeColors };
 }
 
