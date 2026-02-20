@@ -111,7 +111,7 @@ Ultraview registers itself as a **Custom Editor** provider in `package.json`.
 We've just packaged version 0.1.5! Check the releases tab on GitHub to download the VSIX manually if needed.
 
 
-**Enjoy exploring your data with Ultraview!** 🎉
+**Enjoy using your IDE with Ultraview**&nbsp;🎉
 
 
 `code`
