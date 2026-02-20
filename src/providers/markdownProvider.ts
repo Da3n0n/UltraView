@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { MarkdownDocument, buildEditorPage } from '../editor';
+import { getMarkdownSettings } from '../settings/markdownSettings';
 
 export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDocument> {
   private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<vscode.CustomDocumentEditEvent<MarkdownDocument>>();
@@ -23,13 +24,14 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
   ): Promise<void> {
     panel.webview.options = { enableScripts: true };
     const filePath = document.uri.fsPath;
+    let lastSelfWriteTime = 0;
 
     const updateContent = () => {
       const raw = fs.readFileSync(filePath, 'utf8');
       panel.webview.postMessage({ type: 'setContent', content: raw });
     };
 
-    panel.webview.html = buildEditorPage(panel.webview);
+    panel.webview.html = buildEditorPage(panel.webview, getMarkdownSettings().style);
 
     panel.webview.onDidReceiveMessage((msg: { type: string; content?: string }) => {
       switch (msg.type) {
@@ -38,6 +40,7 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
           break;
         case 'save':
           if (msg.content !== undefined) {
+            lastSelfWriteTime = Date.now();
             fs.writeFileSync(filePath, msg.content, 'utf8');
             document.setContent(msg.content);
           }
@@ -45,7 +48,10 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
       }
     });
 
-    const watcher = fs.watch(filePath, () => updateContent());
+    const watcher = fs.watch(filePath, () => {
+      if (Date.now() - lastSelfWriteTime < 500) return;
+      updateContent();
+    });
     panel.onDidDispose(() => watcher.close());
   }
 

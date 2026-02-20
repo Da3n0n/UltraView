@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildCodeGraph } from '../codenode';
+import { defaultCodeGraphSettings } from '../settings';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -143,12 +144,20 @@ function buildHtml(wsPath: string): string {
   @keyframes spin{to{transform:rotate(360deg)}}
   #legend{
     position:fixed;bottom:28px;right:8px;display:flex;flex-direction:column;
-    gap:4px;font-size:10px;color:var(--vscode-descriptionForeground);
-    background:var(--vscode-sideBar-background,rgba(30,30,30,.85));
-    padding:6px 8px;border-radius:5px;
-    border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25))}
-  .leg{display:flex;align-items:center;gap:6px}
-  .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+    gap:6px;font-size:11px;color:var(--vscode-descriptionForeground);
+    background:var(--vscode-sideBar-background,rgba(30,30,30,.9));
+    padding:10px 12px;border-radius:8px;
+    border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
+    min-width:140px}
+  .leg{display:flex;align-items:center;gap:8px;cursor:pointer;padding:3px 5px;border-radius:4px}
+  .leg:hover{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.08))}
+  .dot{width:16px;height:16px;border-radius:50%;flex-shrink:0;border:2px solid rgba(255,255,255,.2)}
+  .color-input{position:absolute;opacity:0;width:0;height:0}
+  #btn-settings{
+    margin-left:auto;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;
+    background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));
+    border:1px solid var(--vscode-panel-border,rgba(128,128,128,.3));
+    color:var(--vscode-editor-foreground)}
 </style>
 </head>
 <body>
@@ -159,6 +168,7 @@ function buildHtml(wsPath: string): string {
   <button class="tbtn" id="btn-fns"     title="Toggle function nodes">ƒ( )</button>
   <input id="search" placeholder="Filter nodes…" autocomplete="off"/>
   <button class="tbtn" id="btn-panel"   title="Open as full panel">⬡</button>
+  <button id="btn-settings" title="Open Settings">⚙</button>
 </div>
 <div id="canvas-wrap"><canvas id="c"></canvas></div>
 <div id="status">
@@ -168,10 +178,11 @@ function buildHtml(wsPath: string): string {
 </div>
 <div id="tooltip"></div>
 <div id="legend">
-  <div class="leg"><div class="dot" style="background:#4EC9B0"></div>TypeScript</div>
-  <div class="leg"><div class="dot" style="background:#9CDCFE"></div>JS</div>
-  <div class="leg"><div class="dot" style="background:#C586C0"></div>Markdown</div>
-  <div class="leg"><div class="dot" style="background:#DCDCAA"></div>Function</div>
+  <div class="leg" data-type="ts"><div class="dot" style="background:#4EC9B0"></div><span>TypeScript</span></div>
+  <div class="leg" data-type="other"><div class="dot" style="background:#9CDCFE"></div><span>JavaScript</span></div>
+  <div class="leg" data-type="md"><div class="dot" style="background:#C586C0"></div><span>Markdown</span></div>
+  <div class="leg" data-type="fn"><div class="dot" style="background:#DCDCAA"></div><span>Function</span></div>
+  <input type="color" class="color-input" id="color-picker">
 </div>
 
 <script>
@@ -179,7 +190,7 @@ function buildHtml(wsPath: string): string {
 'use strict';
 
 // ── Constants ────────────────────────────────────────────────────────────────
-const COLORS = {
+let COLORS = {
   ts:    '#4EC9B0',
   other: '#9CDCFE',
   md:    '#C586C0',
@@ -237,10 +248,24 @@ window.addEventListener('resize', resize);
 window.addEventListener('message', e => {
   const msg = e.data;
   if (msg.type === 'graphData') {
+    if (msg.colors) {
+      COLORS = { ...COLORS, ...msg.colors };
+      updateLegendColors();
+    }
     loadGraph(msg.nodes, msg.edges);
     document.getElementById('loading').style.display = 'none';
   }
 });
+
+function updateLegendColors() {
+  document.querySelectorAll('.leg').forEach(leg => {
+    const type = leg.dataset.type;
+    const dot = leg.querySelector('.dot');
+    if (dot && COLORS[type]) {
+      dot.style.background = COLORS[type];
+    }
+  });
+}
 
 function loadGraph(rawNodes, rawEdges) {
   allNodes = rawNodes;
@@ -602,6 +627,36 @@ document.getElementById('search').addEventListener('input', function() {
   applyFilter();
 });
 
+// Color picker
+const colorPicker = document.getElementById('color-picker');
+let activeColorType = null;
+
+document.querySelectorAll('.leg').forEach(leg => {
+  leg.addEventListener('click', () => {
+    const type = leg.dataset.type;
+    activeColorType = type;
+    colorPicker.value = COLORS[type];
+    colorPicker.click();
+  });
+});
+
+colorPicker.addEventListener('input', function() {
+  if (activeColorType && this.value) {
+    COLORS[activeColorType] = this.value;
+    const dot = document.querySelector('.leg[data-type="' + activeColorType + '"] .dot');
+    if (dot) dot.style.background = this.value;
+    applyFilter();
+    var colorsObj = {};
+    colorsObj[activeColorType] = this.value;
+    vscode.postMessage({ type: 'saveColors', colors: colorsObj });
+  }
+});
+
+// Settings button
+document.getElementById('btn-settings').addEventListener('click', () => {
+  vscode.postMessage({ type: 'openSettings' });
+});
+
 function fitView() {
   if (nodes.length === 0) return;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -683,16 +738,43 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
       case 'openPanel':
         vscode.commands.executeCommand('ultraview.openCodeGraph');
         break;
+      case 'saveColors':
+        this._saveColors(msg.colors as Record<string, string>);
+        break;
+      case 'openSettings':
+        vscode.commands.executeCommand('ultraview.settings.focus');
+        break;
     }
+  }
+
+  private _saveColors(colors: Record<string, string>): void {
+    const config = vscode.workspace.getConfiguration('ultraview');
+    const currentColors = config.get<Record<string, string>>('codeGraph.nodeColors') 
+      || { ...defaultCodeGraphSettings.nodeColors };
+    const mergedColors = { ...currentColors, ...colors };
+    config.update('codeGraph.nodeColors', mergedColors, vscode.ConfigurationTarget.Global);
+  }
+
+  private _loadColors(): Record<string, string> {
+    const config = vscode.workspace.getConfiguration('ultraview');
+    return config.get<Record<string, string>>('codeGraph.nodeColors') 
+      || { ...defaultCodeGraphSettings.nodeColors };
   }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function getColors(): Record<string, string> {
+  const config = vscode.workspace.getConfiguration('ultraview');
+  return config.get<Record<string, string>>('codeGraph.nodeColors') 
+    || { ...defaultCodeGraphSettings.nodeColors };
+}
+
 async function sendGraph(webview: vscode.Webview, showFns: boolean): Promise<void> {
   try {
     const data = await buildGraph(showFns);
-    webview.postMessage({ type: 'graphData', ...data });
+    const colors = getColors();
+    webview.postMessage({ type: 'graphData', ...data, colors });
   } catch (err) {
     vscode.window.showErrorMessage('Code Graph error: ' + String(err));
   }

@@ -1,3 +1,5 @@
+import { MarkdownStyle } from '../settings/markdownSettings';
+
 export function getEditorStyles(): string {
   return /* css */`
 :root {
@@ -88,26 +90,65 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .split .editor-pane:first-child { border-right: 1px solid var(--border); }
 
-h1,h2,h3,h4,h5,h6 { color: var(--accent); margin: 1.5em 0 0.5em; font-weight: 600; line-height: 1.3; }
-h1 { font-size: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4em; }
-h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
-h3 { font-size: 1.2rem; }
-p { line-height: 1.8; margin: 0.8em 0; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 0.88em; color: var(--green); }
-pre { background: var(--code-bg); padding: 16px; border-radius: 8px; overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); }
-pre code { padding: 0; background: none; color: inherit; }
-blockquote { border-left: 3px solid var(--accent); margin: 1em 0; padding: 8px 16px; background: var(--surface); border-radius: 0 6px 6px 0; color: var(--muted); }
-table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
-th { background: var(--surface); color: var(--accent); text-align: left; padding: 8px 12px; border: 1px solid var(--border); font-weight: 600; }
-td { padding: 7px 12px; border: 1px solid var(--border); }
-tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
-ul, ol { margin: 0.8em 0 0.8em 1.6em; line-height: 1.8; }
-li { margin: 0.2em 0; }
-hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
-img { max-width: 100%; border-radius: 6px; }
-input[type=checkbox] { margin-right: 6px; }
+/* === Obsidian Style === */
+.style-obsidian #preview {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  line-height: 1.6;
+}
+.style-obsidian #preview h1, .style-obsidian #preview h2, .style-obsidian #preview h3,
+.style-obsidian #preview h4, .style-obsidian #preview h5, .style-obsidian #preview h6 {
+  color: var(--accent); margin: 1.5em 0 0.5em; font-weight: 600; line-height: 1.3;
+}
+.style-obsidian #preview h1 { font-size: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.4em; }
+.style-obsidian #preview h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.style-obsidian #preview h3 { font-size: 1.2rem; }
+.style-obsidian #preview p { line-height: 1.8; margin: 0.8em 0; }
+.style-obsidian #preview a { color: var(--accent); text-decoration: none; }
+.style-obsidian #preview a:hover { text-decoration: underline; }
+.style-obsidian #preview code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 0.88em; color: var(--green); }
+.style-obsidian #preview pre { background: var(--code-bg); padding: 16px; border-radius: 8px; overflow-x: auto; margin: 1em 0; border: 1px solid var(--border); }
+.style-obsidian #preview pre code { padding: 0; background: none; color: inherit; }
+.style-obsidian #preview blockquote { border-left: 3px solid var(--accent); margin: 1em 0; padding: 8px 16px; background: var(--surface); border-radius: 0 6px 6px 0; color: var(--muted); }
+.style-obsidian #preview table { width: 100%; border-collapse: collapse; margin: 1em 0; font-size: 0.92em; }
+.style-obsidian #preview th { background: var(--surface); color: var(--accent); text-align: left; padding: 8px 12px; border: 1px solid var(--border); font-weight: 600; }
+.style-obsidian #preview td { padding: 7px 12px; border: 1px solid var(--border); }
+.style-obsidian #preview tr:nth-child(even) td { background: rgba(255,255,255,0.03); }
+.style-obsidian #preview ul, .style-obsidian #preview ol { margin: 0.8em 0 0.8em 1.6em; line-height: 1.8; }
+.style-obsidian #preview li { margin: 0.2em 0; }
+.style-obsidian #preview hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+.style-obsidian #preview img { max-width: 100%; border-radius: 6px; }
+
+/* === GitHub Style === */
+.style-github #preview {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  color: var(--text);
+}
+.style-github #preview h1, .style-github #preview h2, .style-github #preview h3,
+.style-github #preview h4, .style-github #preview h5, .style-github #preview h6 {
+  margin-top: 24px; margin-bottom: 16px; font-weight: 600; line-height: 1.25;
+  color: var(--text);
+}
+.style-github #preview h1 { font-size: 2em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.style-github #preview h2 { font-size: 1.5em; padding-bottom: 0.3em; border-bottom: 1px solid var(--border); }
+.style-github #preview h3 { font-size: 1.25em; }
+.style-github #preview h4 { font-size: 1em; }
+.style-github #preview p { margin: 0 0 16px; line-height: 1.6; }
+.style-github #preview a { color: var(--accent); text-decoration: none; }
+.style-github #preview a:hover { text-decoration: underline; }
+.style-github #preview code { background: rgba(175, 184, 193, 0.2); padding: 0.2em 0.4em; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; font-size: 85%; }
+.style-github #preview pre { background: var(--code-bg); padding: 16px; border-radius: 6px; overflow-x: auto; margin: 0 0 16px; border: 1px solid var(--border); }
+.style-github #preview pre code { background: transparent; padding: 0; font-size: 85%; }
+.style-github #preview blockquote { border-left: 0.25em solid var(--border); margin: 0 0 16px; padding: 0 1em; color: var(--muted); }
+.style-github #preview table { width: 100%; border-collapse: collapse; margin: 0 0 16px; }
+.style-github #preview th, .style-github #preview td { padding: 6px 13px; border: 1px solid var(--border); }
+.style-github #preview th { font-weight: 600; background: var(--surface); }
+.style-github #preview tr:nth-child(2n) { background: var(--surface); }
+.style-github #preview ul, .style-github #preview ol { margin: 0 0 16px; padding-left: 2em; }
+.style-github #preview li { margin: 0.25em 0; }
+.style-github #preview hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; height: 0.25em; background: transparent; }
+.style-github #preview img { max-width: 100%; box-sizing: content-box; background: var(--surface); }
+.style-github #preview input[type=checkbox] { margin-right: 0.5em; }
 
 .status-bar {
   display: flex; align-items: center; gap: 16px;
@@ -144,9 +185,10 @@ input[type=checkbox] { margin-right: 6px; }
 }`;
 }
 
-export function getEditorHtml(): string {
+export function getEditorHtml(style: MarkdownStyle = 'obsidian'): string {
+  const styleClass = `style-${style}`;
   return /* html */`
-<div id="app">
+<div id="app" class="${styleClass}">
   <div class="toolbar">
     <div class="toolbar-group">
       <div class="dropdown">
@@ -185,6 +227,13 @@ export function getEditorHtml(): string {
     <div class="toolbar-group">
       <button class="toolbar-btn" data-action="codeblock" title="Code Block">{ }</button>
       <button class="toolbar-btn" data-action="table" title="Table">&#8862;</button>
+    </div>
+    <div class="toolbar-divider"></div>
+    <div class="toolbar-group">
+      <select class="toolbar-select" id="style-select" title="Style">
+        <option value="obsidian" ${style === 'obsidian' ? 'selected' : ''}>Obsidian</option>
+        <option value="github" ${style === 'github' ? 'selected' : ''}>GitHub</option>
+      </select>
     </div>
     <div class="toolbar-divider"></div>
     <div class="toolbar-group" style="margin-left: auto;">

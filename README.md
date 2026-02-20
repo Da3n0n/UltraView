@@ -1,4 +1,4 @@
-# ✨ Ultraview – Your Instant Database &amp; Markdown Explorer
+# ✨ Ultraview – Your Instant Database ddd&amp; Markdown Explorer
 
 [] 
 

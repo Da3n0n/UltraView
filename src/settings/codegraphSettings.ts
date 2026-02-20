@@ -6,6 +6,12 @@ export interface CodeGraphSettings {
   clusterBy: 'file' | 'folder' | 'none';
   showImports: boolean;
   showExports: boolean;
+  nodeColors: {
+    ts: string;
+    other: string;
+    md: string;
+    fn: string;
+  };
 }
 
 export const defaultCodeGraphSettings: CodeGraphSettings = {
@@ -15,7 +21,13 @@ export const defaultCodeGraphSettings: CodeGraphSettings = {
   layoutDirection: 'horizontal',
   clusterBy: 'folder',
   showImports: true,
-  showExports: true
+  showExports: true,
+  nodeColors: {
+    ts: '#4EC9B0',
+    other: '#9CDCFE',
+    md: '#C586C0',
+    fn: '#DCDCAA'
+  }
 };
 
 export function getCodeGraphSettings(): CodeGraphSettings {
