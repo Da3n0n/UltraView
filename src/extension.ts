@@ -5,6 +5,7 @@ import { AccessProvider } from './providers/accessProvider';
 import { SqlDumpProvider } from './providers/sqlDumpProvider';
 import { MarkdownProvider } from './providers/markdownProvider';
 import { IndexProvider } from './providers/indexProvider';
+import { CodeGraphProvider } from './providers/codeGraphProvider';
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
@@ -37,7 +38,15 @@ export function activate(context: vscode.ExtensionContext) {
       'dbview.index',
       new IndexProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
-    )
+    ),
+    vscode.window.registerWebviewViewProvider(
+      CodeGraphProvider.viewId,
+      new CodeGraphProvider(context),
+      { webviewOptions: { retainContextWhenHidden: true } }
+    ),
+    vscode.commands.registerCommand('dbview.openCodeGraph', () => {
+      CodeGraphProvider.openAsPanel(context);
+    })
   );
 }
 
