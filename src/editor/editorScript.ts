@@ -9,8 +9,9 @@ export function getEditorScript(): string {
   const viewMode = document.getElementById('view-mode');
 
   let saveTimeout = null;
+  let previewSyncTimeout = null;
   let content = '';
-  let isSyncing = false;
+  let lastPreviewHtml = '';
 
   function htmlToMarkdown(html) {
     if (typeof TurndownService !== 'undefined') {
@@ -33,21 +34,22 @@ export function getEditorScript(): string {
   }
 
   function updatePreview() {
-    if (isSyncing) return;
-    isSyncing = true;
     content = editor.value;
-    preview.innerHTML = marked.parse(content);
+    const newHtml = marked.parse(content);
+    if (preview.innerHTML !== newHtml) {
+      preview.innerHTML = newHtml;
+    }
+    lastPreviewHtml = preview.innerHTML;
     updateStats();
-    isSyncing = false;
   }
 
   function updateRawFromPreview() {
-    if (isSyncing) return;
-    isSyncing = true;
-    content = htmlToMarkdown(preview.innerHTML);
+    const currentHtml = preview.innerHTML;
+    if (currentHtml === lastPreviewHtml) return;
+    lastPreviewHtml = currentHtml;
+    content = htmlToMarkdown(currentHtml);
     editor.value = content;
     updateStats();
-    isSyncing = false;
   }
 
   function updateStats() {
@@ -156,8 +158,11 @@ export function getEditorScript(): string {
   });
 
   preview.addEventListener('input', () => {
-    updateRawFromPreview();
-    autoSave();
+    clearTimeout(previewSyncTimeout);
+    previewSyncTimeout = setTimeout(() => {
+      updateRawFromPreview();
+      autoSave();
+    }, 300);
   });
 
   editor.addEventListener('keydown', (e) => {
@@ -180,14 +185,20 @@ export function getEditorScript(): string {
         case 'b': 
           e.preventDefault(); 
           document.execCommand('bold');
-          updateRawFromPreview();
-          autoSave();
+          clearTimeout(previewSyncTimeout);
+          previewSyncTimeout = setTimeout(() => {
+            updateRawFromPreview();
+            autoSave();
+          }, 300);
           break;
         case 'i': 
           e.preventDefault(); 
           document.execCommand('italic');
-          updateRawFromPreview();
-          autoSave();
+          clearTimeout(previewSyncTimeout);
+          previewSyncTimeout = setTimeout(() => {
+            updateRawFromPreview();
+            autoSave();
+          }, 300);
           break;
         case 's': 
           e.preventDefault(); 
@@ -209,6 +220,7 @@ export function getEditorScript(): string {
       editPane.classList.add('visible');
       previewPane.classList.add('visible');
       preview.contentEditable = 'true';
+      updatePreview();
     } else if (viewMode.value === 'edit') {
       editPane.classList.add('visible');
       preview.contentEditable = 'false';

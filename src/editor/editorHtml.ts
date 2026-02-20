@@ -4,17 +4,20 @@ export function getEditorStyles(): string {
   --bg: var(--vscode-editor-background);
   --surface: var(--vscode-sideBar-background, var(--vscode-editor-background));
   --surface2: var(--vscode-list-hoverBackground, rgba(128,128,128,0.1));
-  --border: var(--vscode-panel-border, rgba(128,128,128,0.35));
+  --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128,128,128,0.35)));
   --text: var(--vscode-editor-foreground);
   --muted: var(--vscode-descriptionForeground);
   --accent: var(--vscode-textLink-foreground, var(--vscode-button-background));
   --green: var(--vscode-terminal-ansiGreen, #4ec9b0);
   --code-bg: var(--vscode-input-background, var(--vscode-editor-background));
-  --toolbar-bg: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  --toolbar-bg: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  --scrollbar: var(--vscode-scrollbarSlider-background, rgba(128,128,128,0.4));
   --radius: 6px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
-*:focus { outline: none; }
+*:focus, *:focus-visible, *:focus-within { outline: none; border-color: transparent; box-shadow: none; }
+:focus { outline: none !important; }
+:focus-visible { outline: none !important; }
 html, body { height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
 
 #app { display: flex; flex-direction: column; height: 100vh; }
@@ -64,15 +67,24 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 #preview {
   flex: 1; width: 100%; overflow-y: auto; padding: 20px 40px 80px;
-  outline: none; caret-color: var(--text);
+  outline: none; caret-color: var(--text); border: none;
+  background: var(--surface);
 }
 
-#preview:focus { outline: none; border: none; }
+#preview:focus { outline: none; border: none; box-shadow: none; }
+#preview:focus-visible { outline: none; border: none; box-shadow: none; }
+[contenteditable]:focus { outline: none; border: none; box-shadow: none; }
+[contenteditable]:focus-visible { outline: none; border: none; box-shadow: none; }
+
+#edit-pane { background: var(--bg); }
+#preview-pane { background: var(--surface); }
 
 .edit-only .editor-pane:first-child { flex: 1 1 100%; }
 .edit-only .editor-pane:last-child { display: none !important; }
 .preview-only .editor-pane:first-child { display: none !important; }
 .preview-only .editor-pane:last-child { flex: 1 1 100%; }
+#preview-pane:focus { outline: none; border: none; box-shadow: none; }
+#edit-pane:focus { outline: none; border: none; box-shadow: none; }
 
 .split .editor-pane:first-child { border-right: 1px solid var(--border); }
 
@@ -177,15 +189,15 @@ export function getEditorHtml(): string {
     <div class="toolbar-divider"></div>
     <div class="toolbar-group" style="margin-left: auto;">
       <select class="toolbar-select" id="view-mode">
+        <option value="preview" selected>RICH</option>
         <option value="split">Split View</option>
         <option value="edit">RAW</option>
-        <option value="preview">RICH</option>
       </select>
     </div>
   </div>
 
-  <div class="editor-wrap split" id="editor-wrap">
-    <div class="editor-pane visible" id="edit-pane">
+  <div class="editor-wrap preview-only" id="editor-wrap">
+    <div class="editor-pane" id="edit-pane">
       <textarea id="editor" placeholder="Start writing..." spellcheck="false"></textarea>
     </div>
     <div class="editor-pane visible" id="preview-pane">
