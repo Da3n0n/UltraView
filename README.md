@@ -15,9 +15,9 @@ No drivers. No best fhfh strings. No hassle. It just works across all your favor
 
 ## 🔥 Features
 
-### 👁️ Instant Preview
+## 👁️ Instant Preview**bold text**
 
-Forget about installing heavy database clients just to check a table. Ultraview integrates directly into your file explorer. Just **double-click** a supported file, and it opens right inside VS Code.
+Forget about installing heavy database clients just to check a table. Uddltraview integrates directly into your file explorer. Just **double-click** a supported file, and it opens right inside VS Code.
 
 
 ### 🎨 Matches Your Theme Automatically
@@ -114,5 +114,8 @@ We've just packaged version 0.1.5! Check the releases tab on GitHub to download 
 
 
 **Enjoy exploring your data with Ultraview!** 🎉
+
+
+`code`
 
 
