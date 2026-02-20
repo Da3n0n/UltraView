@@ -1,6 +1,4 @@
-# ✨ Ultraview – Your Instant Database ddd&amp; Markdown Explorer
-
-[] 
+✨ Ultraview – Your Instant Database ddd&amp; Markdown Explorer
 
 
 ([https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview]($1))
