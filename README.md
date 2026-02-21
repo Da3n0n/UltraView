@@ -1,6 +1,6 @@
 # Ultraview – The Ultra VS Code Viewer
 
-[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=da3n0n.ultraview)
+[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview)
 
 No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers and editors right inside VS Code — and it always looks like it belongs there.
 
@@ -197,7 +197,7 @@ All settings live under the `ultraview.*` namespace in VS Code settings.
 
 | Setting | Description |
 |---------|-------------|
-| `ultraview.codeGraph.nodeColors.*` | Per-type node colors, set via the in-graph color picker |
+| `ultraview.codeGraph.nodeColors.*` | Color for each node type (TS, JS, MD, function) |
 | `ultraview.codeGraph.nodeSize` | Size of nodes in the graph |
 | `ultraview.codeGraph.fontSize` | Label font size |
 | `ultraview.codeGraph.showLabels` | Toggle node labels |
