@@ -13,8 +13,11 @@ No drivers. No best fhfh strings. No hassle. It just works across all your favor
 
 ## 🔥 Features
 
+
 - obsidian like node graph for your code ad notes in one 
+
 - Preview all type of DB and index files in modern Webview UI that matches your theme dynamically
+
 - Rich inline Markdown Viewer and Editor
 
 
@@ -119,9 +122,5 @@ We've just packaged version 0.1.5! Check the releases tab on GitHub to download 
 **Enjoy using your IDE with Ultraview**&nbsp;🎉
 
 
-`code`
-
-
-**bold text**strikethrough
-
+# 
 

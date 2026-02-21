@@ -150,9 +150,30 @@ function buildHtml(wsPath: string): string {
     padding:8px;border-radius:8px;
     border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
     min-width:130px;z-index:10}
+  #settings-panel{
+    position:fixed;top:44px;right:8px;display:flex;flex-direction:column;
+    gap:8px;font-size:11px;color:var(--vscode-descriptionForeground);
+    background:var(--vscode-sideBar-background,rgba(30,30,30,.9));
+    padding:10px;border-radius:8px;
+    border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
+    min-width:180px;z-index:10}
+  #settings-panel.hidden{display:none !important;}
+  .ui-hidden #legend{display:none !important;}
+  .ui-hidden #settings-panel{display:none !important;}
   .leg{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:4px}
   .leg:hover{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.1))}
   .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;border:1.5px solid rgba(255,255,255,.25)}
+  .setting-row{display:flex;flex-direction:column;gap:3px}
+  .setting-row label{font-size:10px;opacity:.8;display:flex;justify-content:space-between}
+  .setting-row input[type="range"]{
+    width:100%;height:4px;border-radius:2px;
+    background:var(--vscode-input-background,rgba(128,128,128,.2));
+    -webkit-appearance:none;cursor:pointer}
+  .setting-row input[type="range"]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--vscode-button-background,rgba(0,120,212,.9));
+    border:1px solid rgba(255,255,255,.3);cursor:pointer}
+  .settings-header{font-weight:600;font-size:11px;margin-bottom:2px;opacity:.9}
   #btn-settings{margin-left:auto;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));border:1px solid var(--vscode-panel-border,rgba(128,128,128,.3));color:var(--vscode-editor-foreground)}
   ${colorPickerStyle}
 </style>
@@ -165,7 +186,8 @@ function buildHtml(wsPath: string): string {
   <button class="tbtn" id="btn-fns"     title="Toggle function nodes">ƒ( )</button>
   <input id="search" placeholder="Filter nodes…" autocomplete="off"/>
   <button class="tbtn" id="btn-panel"   title="Open as full panel">⬡</button>
-  <button id="btn-settings" title="Open Settings">⚙</button>
+  <button class="tbtn" id="btn-eye" title="Toggle UI">👁</button>
+  <button id="btn-settings" title="Open VS Code Settings">⚙</button>
 </div>
 <div id="canvas-wrap"><canvas id="c"></canvas></div>
 <div id="status">
@@ -179,6 +201,26 @@ function buildHtml(wsPath: string): string {
   <div class="leg" data-type="other"><div class="dot" style="background:#9CDCFE"></div><span>JavaScript</span></div>
   <div class="leg" data-type="md"><div class="dot" style="background:#C586C0"></div><span>Markdown</span></div>
   <div class="leg" data-type="fn"><div class="dot" style="background:#DCDCAA"></div><span>Function</span></div>
+</div>
+
+<div id="settings-panel" class="hidden">
+  <div class="settings-header">Graph Dynamics</div>
+  <div class="setting-row">
+    <label><span>Repulsion</span><span id="val-repel">9000</span></label>
+    <input type="range" id="slider-repel" min="1000" max="30000" value="9000" step="500"/>
+  </div>
+  <div class="setting-row">
+    <label><span>Spring Length</span><span id="val-spring">130</span></label>
+    <input type="range" id="slider-spring" min="40" max="300" value="130" step="10"/>
+  </div>
+  <div class="setting-row">
+    <label><span>Damping</span><span id="val-damp">0.65</span></label>
+    <input type="range" id="slider-damp" min="0.3" max="0.95" value="0.65" step="0.05"/>
+  </div>
+  <div class="setting-row">
+    <label><span>Center Pull</span><span id="val-center">0.008</span></label>
+    <input type="range" id="slider-center" min="0.001" max="0.05" value="0.008" step="0.001"/>
+  </div>
 </div>
 
 
@@ -201,11 +243,11 @@ let COLORS = {
   hovered:  'rgba(255,255,255,0.85)',
 };
 const RADIUS = { ts: 9, other: 8, md: 9, fn: 6 };
-const REPULSION   = 9000;
-const SPRING_LEN  = { import: 130, link: 150, fn: 55 };
-const SPRING_K    = 0.20;
-const DAMPING     = 0.65;
-const CENTER_K    = 0.008;
+let REPULSION   = 9000;
+let SPRING_LEN  = { import: 130, link: 150, fn: 55 };
+let SPRING_K    = 0.20;
+let DAMPING     = 0.65;
+let CENTER_K    = 0.008;
 const REPEL_CUTOFF= 350;
 const ALPHA_DECAY = 0.994;
 const MIN_ALPHA   = 0.001;
@@ -247,7 +289,37 @@ window.addEventListener('resize', resize);
 // ── Load graph data ──────────────────────────────────────────────────────────
 window.addEventListener('message', e => {
   const msg = e.data;
+
+  // Handle live configuration updates from VS Code config listener
+  if (msg.type === 'configUpdate') {
+    let needsUpdate = false;
+    if (msg.hideUI !== undefined) {
+      document.body.classList.toggle('ui-hidden', msg.hideUI);
+      const btnEye = document.getElementById('btn-eye');
+      if (btnEye) btnEye.classList.toggle('active', msg.hideUI);
+    }
+    if (msg.colors) {
+      COLORS = { ...COLORS, ...msg.colors };
+      updateLegendColors();
+      needsUpdate = true;
+    }
+    if (needsUpdate && alpha <= MIN_ALPHA) {
+      // Small kick to update the colors immediately without a full reload
+      alpha = 0.05;
+      if (!simRunning) {
+        simRunning = true;
+        rafId = requestAnimationFrame(tick);
+      }
+    }
+    return;
+  }
+
   if (msg.type === 'graphData') {
+    if (msg.hideUI !== undefined) {
+      document.body.classList.toggle('ui-hidden', msg.hideUI);
+      const btnEye = document.getElementById('btn-eye');
+      if (btnEye) btnEye.classList.toggle('active', msg.hideUI);
+    }
     if (msg.colors) {
       COLORS = { ...COLORS, ...msg.colors };
       updateLegendColors();
@@ -534,6 +606,7 @@ canvas.addEventListener('mousedown', e => {
   const my = e.clientY - rect.top;
   const hit = hitNode(mx, my);
   pressing = true;
+  canvas._dragStart = { x: mx, y: my };
 
   if (hit >= 0) {
     dragNode = hit;
@@ -546,6 +619,12 @@ canvas.addEventListener('mousedown', e => {
 });
 
 window.addEventListener('mouseup', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const moved = canvas._dragStart && Math.hypot(mx - canvas._dragStart.x, my - canvas._dragStart.y) > 5;
+  canvas._dragStart = undefined;
+  
   if (dragNode >= 0) {
     nodes[dragNode].pinned = false;
     dragNode = -1;
@@ -555,6 +634,7 @@ window.addEventListener('mouseup', e => {
     canvas.style.cursor = hovered >= 0 ? 'pointer' : 'grab';
   }
   pressing = false;
+  canvas._didDrag = moved;
 });
 
 canvas.addEventListener('click', e => {
@@ -566,19 +646,13 @@ canvas.addEventListener('click', e => {
   if (hit >= 0) {
     const nd = nodes[hit];
     document.getElementById('st-selected').textContent = '● ' + nd.label;
+    if (!canvas._didDrag) {
+      vscode.postMessage({ type: 'openFile', path: nd.filePath });
+    }
   } else {
     document.getElementById('st-selected').textContent = '';
   }
-});
-
-canvas.addEventListener('dblclick', e => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const hit = hitNode(mx, my);
-  if (hit >= 0) {
-    vscode.postMessage({ type: 'openFile', path: nodes[hit].filePath });
-  }
+  canvas._didDrag = false;
 });
 
 canvas.addEventListener('wheel', e => {
@@ -605,6 +679,36 @@ canvas.addEventListener('gesturechange', e => {
 }, { passive: false });
 
 // ── Toolbar ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-eye').addEventListener('click', function() {
+  const isHidden = document.body.classList.toggle('ui-hidden');
+  this.classList.toggle('active', isHidden);
+  vscode.postMessage({ type: 'toggleUI', hideUI: isHidden });
+});
+
+document.getElementById('slider-repel').addEventListener('input', function() {
+  REPULSION = parseFloat(this.value);
+  document.getElementById('val-repel').textContent = REPULSION;
+  alpha = Math.max(alpha, 0.3);
+});
+
+document.getElementById('slider-spring').addEventListener('input', function() {
+  const val = parseFloat(this.value);
+  SPRING_LEN = { import: val, link: val * 1.15, fn: val * 0.42 };
+  document.getElementById('val-spring').textContent = val;
+  alpha = Math.max(alpha, 0.3);
+});
+
+document.getElementById('slider-damp').addEventListener('input', function() {
+  DAMPING = parseFloat(this.value);
+  document.getElementById('val-damp').textContent = DAMPING.toFixed(2);
+});
+
+document.getElementById('slider-center').addEventListener('input', function() {
+  CENTER_K = parseFloat(this.value);
+  document.getElementById('val-center').textContent = CENTER_K.toFixed(3);
+  alpha = Math.max(alpha, 0.2);
+});
+
 document.getElementById('btn-refresh').addEventListener('click', () => {
   document.getElementById('loading').style.display = 'flex';
   vscode.postMessage({ type: 'refresh', showFns });
@@ -700,7 +804,20 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'ultraview.codeGraph';
   private _view?: vscode.WebviewView;
 
-  constructor(private readonly ctx: vscode.ExtensionContext) { }
+  // Static list of all active webviews to broadcast settings changes
+  private static readonly activeWebviews = new Set<vscode.Webview>();
+  private static configListener?: vscode.Disposable;
+
+  constructor(private readonly ctx: vscode.ExtensionContext) {
+    if (!CodeGraphProvider.configListener) {
+      CodeGraphProvider.configListener = vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('ultraview.codeGraph.nodeColors') || e.affectsConfiguration('ultraview.codeGraph.hideUI')) {
+          CodeGraphProvider.broadcastSettings();
+        }
+      });
+      ctx.subscriptions.push(CodeGraphProvider.configListener);
+    }
+  }
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -712,6 +829,11 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
 
     const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     webviewView.webview.html = buildHtml(wsRoot);
+
+    CodeGraphProvider.activeWebviews.add(webviewView.webview);
+    webviewView.onDidDispose(() => {
+      CodeGraphProvider.activeWebviews.delete(webviewView.webview);
+    });
 
     webviewView.webview.onDidReceiveMessage(msg => this._handleMessage(msg, webviewView.webview));
   }
@@ -726,6 +848,11 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
     );
     const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
     panel.webview.html = buildHtml(wsRoot);
+
+    CodeGraphProvider.activeWebviews.add(panel.webview);
+    panel.onDidDispose(() => {
+      CodeGraphProvider.activeWebviews.delete(panel.webview);
+    });
     panel.webview.onDidReceiveMessage(msg => {
       if (msg.type === 'ready' || msg.type === 'refresh') {
         sendGraph(panel.webview, msg.showFns ?? false);
@@ -754,7 +881,15 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
       case 'openSettings':
         vscode.commands.executeCommand('ultraview.settings.focus');
         break;
+      case 'toggleUI':
+        this._saveToggleUI(msg.hideUI as boolean);
+        break;
     }
+  }
+
+  private async _saveToggleUI(hideUI: boolean): Promise<void> {
+    const config = vscode.workspace.getConfiguration('ultraview');
+    await config.update('codeGraph.hideUI', hideUI, vscode.ConfigurationTarget.Global);
   }
 
   private async _saveColors(colors: Record<string, string>): Promise<void> {
@@ -770,6 +905,15 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
     return config.get<Record<string, string>>('codeGraph.nodeColors')
       || { ...defaultCodeGraphSettings.nodeColors };
   }
+
+  private static broadcastSettings() {
+    const colors = getColors();
+    const config = vscode.workspace.getConfiguration('ultraview');
+    const hideUI = config.get<boolean>('codeGraph.hideUI') ?? false;
+    for (const webview of CodeGraphProvider.activeWebviews) {
+      webview.postMessage({ type: 'configUpdate', colors, hideUI });
+    }
+  }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -784,7 +928,9 @@ async function sendGraph(webview: vscode.Webview, showFns: boolean): Promise<voi
   try {
     const data = await buildGraph(showFns);
     const colors = getColors();
-    webview.postMessage({ type: 'graphData', ...data, colors });
+    const config = vscode.workspace.getConfiguration('ultraview');
+    const hideUI = config.get<boolean>('codeGraph.hideUI') ?? false;
+    webview.postMessage({ type: 'graphData', ...data, colors, hideUI });
   } catch (err) {
     vscode.window.showErrorMessage('Code Graph error: ' + String(err));
   }
@@ -792,5 +938,10 @@ async function sendGraph(webview: vscode.Webview, showFns: boolean): Promise<voi
 
 function openFile(filePath: string): void {
   const uri = vscode.Uri.file(filePath);
-  vscode.window.showTextDocument(uri, { preview: true, preserveFocus: false });
+  const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === uri.fsPath);
+  if (doc) {
+    vscode.window.showTextDocument(doc, { preserveFocus: false });
+  } else {
+    vscode.window.showTextDocument(uri, { preview: false, preserveFocus: false });
+  }
 }

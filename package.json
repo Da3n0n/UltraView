@@ -3,7 +3,7 @@
   "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.23",
+  "version": "0.2.32",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
@@ -97,6 +97,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show labels on graph nodes"
+        },
+        "ultraview.codeGraph.hideUI": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide parts of the UI (e.g. legend) in the code graph"
         },
         "ultraview.codeGraph.layoutDirection": {
           "type": "string",

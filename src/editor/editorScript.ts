@@ -12,6 +12,17 @@ export function getEditorScript(): string {
   let previewSyncTimeout = null;
   let content = '';
   let lastPreviewHtml = '';
+  let currentMode = 'preview'; // 'preview' (RICH), 'split', 'edit' (RAW)
+  let lastFocusedArea = 'preview'; // 'editor' or 'preview'
+
+  editor.addEventListener('focus', () => { lastFocusedArea = 'editor'; });
+  preview.addEventListener('focus', () => { lastFocusedArea = 'preview'; });
+
+  function isPreviewActive() {
+    if (currentMode === 'edit') return false;
+    if (currentMode === 'preview') return true;
+    return lastFocusedArea === 'preview';
+  }
 
   function htmlToMarkdown(html) {
     if (typeof TurndownService !== 'undefined') {
@@ -35,9 +46,11 @@ export function getEditorScript(): string {
 
   function updatePreview() {
     content = editor.value;
+    const scrollTop = preview.scrollTop;
     const newHtml = marked.parse(content);
     if (preview.innerHTML !== newHtml) {
       preview.innerHTML = newHtml;
+      preview.scrollTop = scrollTop;
     }
     lastPreviewHtml = preview.innerHTML;
     updateStats();
@@ -71,6 +84,8 @@ export function getEditorScript(): string {
     saveTimeout = setTimeout(save, 1000);
   }
 
+  // --- Raw textarea operations ---
+
   function wrapSelection(before, after, placeholder) {
     after = after || before;
     const start = editor.selectionStart;
@@ -78,7 +93,7 @@ export function getEditorScript(): string {
     const sel = editor.value.substring(start, end) || placeholder || '';
     const replacement = before + sel + after;
     editor.setRangeText(replacement, start, end, 'end');
-    editor.focus();
+    editor.focus({ preventScroll: true });
     updatePreview();
     autoSave();
   }
@@ -89,7 +104,7 @@ export function getEditorScript(): string {
     if (moveCursor) {
       editor.selectionStart = editor.selectionEnd = start + moveCursor;
     }
-    editor.focus();
+    editor.focus({ preventScroll: true });
     updatePreview();
     autoSave();
   }
@@ -98,7 +113,7 @@ export function getEditorScript(): string {
     const start = editor.selectionStart;
     const lineStart = editor.value.lastIndexOf('\\n', start - 1) + 1;
     editor.setRangeText(prefix, lineStart, lineStart, 'end');
-    editor.focus();
+    editor.focus({ preventScroll: true });
     updatePreview();
     autoSave();
   }
@@ -110,7 +125,7 @@ export function getEditorScript(): string {
     const fullLineEnd = lineEnd === -1 ? editor.value.length : lineEnd;
     const line = editor.value.substring(lineStart, fullLineEnd);
     const prefix = '#'.repeat(level) + ' ';
-    
+
     let newLine;
     if (/^#{1,6}\\s/.test(line)) {
       newLine = prefix + line.replace(/^#{1,6}\\s/, '');
@@ -118,31 +133,103 @@ export function getEditorScript(): string {
       newLine = prefix + line;
     }
     editor.setRangeText(newLine, lineStart, fullLineEnd, 'end');
-    editor.focus();
+    editor.focus({ preventScroll: true });
     updatePreview();
     autoSave();
   }
 
+  // --- Preview (contenteditable) operations ---
+
+  function syncPreviewToEditor() {
+    clearTimeout(previewSyncTimeout);
+    previewSyncTimeout = setTimeout(() => {
+      updateRawFromPreview();
+      autoSave();
+    }, 100);
+  }
+
+  function wrapInPreview(execCmd) {
+    preview.focus();
+    document.execCommand(execCmd);
+    syncPreviewToEditor();
+  }
+
+  function formatBlockInPreview(tag) {
+    preview.focus();
+    document.execCommand('formatBlock', false, tag);
+    syncPreviewToEditor();
+  }
+
+  function insertHtmlInPreview(html) {
+    preview.focus();
+    document.execCommand('insertHTML', false, html);
+    syncPreviewToEditor();
+  }
+
+  function insertCodeInPreview() {
+    preview.focus();
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      const selectedText = range.toString() || 'code';
+      const code = document.createElement('code');
+      code.textContent = selectedText;
+      range.deleteContents();
+      range.insertNode(code);
+      range.setStartAfter(code);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    syncPreviewToEditor();
+  }
+
+  // --- Mode-aware actions ---
+
   const actions = {
-    bold: () => wrapSelection('**', '**', 'bold text'),
-    italic: () => wrapSelection('*', '*', 'italic text'),
-    strike: () => wrapSelection('~~', '~~', 'strikethrough'),
-    code: () => wrapSelection('\`', '\`', 'code'),
-    h1: () => toggleHeading(1),
-    h2: () => toggleHeading(2),
-    h3: () => toggleHeading(3),
-    h4: () => toggleHeading(4),
-    h5: () => toggleHeading(5),
-    h6: () => toggleHeading(6),
-    ul: () => insertLine('- '),
-    ol: () => insertLine('1. '),
+    bold: () => isPreviewActive()
+      ? wrapInPreview('bold')
+      : wrapSelection('**', '**', 'bold text'),
+    italic: () => isPreviewActive()
+      ? wrapInPreview('italic')
+      : wrapSelection('*', '*', 'italic text'),
+    strike: () => isPreviewActive()
+      ? wrapInPreview('strikeThrough')
+      : wrapSelection('~~', '~~', 'strikethrough'),
+    code: () => isPreviewActive()
+      ? insertCodeInPreview()
+      : wrapSelection('\`', '\`', 'code'),
+    h1: () => isPreviewActive() ? formatBlockInPreview('h1') : toggleHeading(1),
+    h2: () => isPreviewActive() ? formatBlockInPreview('h2') : toggleHeading(2),
+    h3: () => isPreviewActive() ? formatBlockInPreview('h3') : toggleHeading(3),
+    h4: () => isPreviewActive() ? formatBlockInPreview('h4') : toggleHeading(4),
+    h5: () => isPreviewActive() ? formatBlockInPreview('h5') : toggleHeading(5),
+    h6: () => isPreviewActive() ? formatBlockInPreview('h6') : toggleHeading(6),
+    ul: () => isPreviewActive()
+      ? (() => { preview.focus(); document.execCommand('insertUnorderedList'); syncPreviewToEditor(); })()
+      : insertLine('- '),
+    ol: () => isPreviewActive()
+      ? (() => { preview.focus(); document.execCommand('insertOrderedList'); syncPreviewToEditor(); })()
+      : insertLine('1. '),
     task: () => insertLine('- [ ] '),
-    quote: () => insertLine('> '),
-    link: () => wrapSelection('[', '](url)', 'link text'),
-    image: () => insertAtCursor('![alt text](url)', 2),
-    hr: () => insertAtCursor('\\n---\\n'),
-    codeblock: () => insertAtCursor('\\n\`\`\`\\ncode here\\n\`\`\`\\n', 4),
-    table: () => insertAtCursor('\\n| Header 1 | Header 2 |\\n|----------|----------|\\n| Cell 1   | Cell 2   |\\n')
+    quote: () => isPreviewActive()
+      ? formatBlockInPreview('blockquote')
+      : insertLine('> '),
+    link: () => isPreviewActive()
+      ? insertHtmlInPreview('<a href="url">link text</a>')
+      : wrapSelection('[', '](url)', 'link text'),
+    image: () => isPreviewActive()
+      ? insertHtmlInPreview('<img src="url" alt="alt text">')
+      : insertAtCursor('![alt text](url)', 2),
+    hr: () => isPreviewActive()
+      ? (() => { preview.focus(); document.execCommand('insertHorizontalRule'); syncPreviewToEditor(); })()
+      : insertAtCursor('\\n---\\n'),
+    codeblock: () => isPreviewActive()
+      ? insertHtmlInPreview('<pre><code>code here</code></pre>')
+      : insertAtCursor('\\n\`\`\`\\ncode here\\n\`\`\`\\n', 4),
+    table: () => isPreviewActive()
+      ? insertHtmlInPreview('<table><thead><tr><th>Header 1</th><th>Header 2</th></tr></thead><tbody><tr><td>Cell 1</td><td>Cell 2</td></tr></tbody></table>')
+      : insertAtCursor('\\n| Header 1 | Header 2 |\\n|----------|----------|\\n| Cell 1   | Cell 2   |\\n'),
   };
 
   document.querySelectorAll('[data-action]').forEach(btn => {
@@ -182,40 +269,33 @@ export function getEditorScript(): string {
   preview.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey) {
       switch(e.key.toLowerCase()) {
-        case 'b': 
-          e.preventDefault(); 
+        case 'b':
+          e.preventDefault();
           document.execCommand('bold');
-          clearTimeout(previewSyncTimeout);
-          previewSyncTimeout = setTimeout(() => {
-            updateRawFromPreview();
-            autoSave();
-          }, 300);
+          syncPreviewToEditor();
           break;
-        case 'i': 
-          e.preventDefault(); 
+        case 'i':
+          e.preventDefault();
           document.execCommand('italic');
-          clearTimeout(previewSyncTimeout);
-          previewSyncTimeout = setTimeout(() => {
-            updateRawFromPreview();
-            autoSave();
-          }, 300);
+          syncPreviewToEditor();
           break;
-        case 's': 
-          e.preventDefault(); 
-          save(); 
+        case 's':
+          e.preventDefault();
+          save();
           break;
       }
     }
   });
 
   viewMode.addEventListener('change', () => {
+    currentMode = viewMode.value;
     wrap.className = 'editor-wrap ' + viewMode.value;
     const editPane = document.getElementById('edit-pane');
     const previewPane = document.getElementById('preview-pane');
-    
+
     editPane.classList.remove('visible');
     previewPane.classList.remove('visible');
-    
+
     if (viewMode.value === 'split') {
       editPane.classList.add('visible');
       previewPane.classList.add('visible');
@@ -224,9 +304,11 @@ export function getEditorScript(): string {
     } else if (viewMode.value === 'edit') {
       editPane.classList.add('visible');
       preview.contentEditable = 'false';
+      editor.focus({ preventScroll: true });
     } else {
       previewPane.classList.add('visible');
       preview.contentEditable = 'true';
+      lastFocusedArea = 'preview';
     }
   });
 
