@@ -1,6 +1,6 @@
 # Ultraview – The Ultra VS Code Viewer
 
-[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=Dannan.ultraview)
+[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Marketplace-blue)](https://marketplace.visualstudio.com/items?itemName=da3n0n.ultraview)
 
 No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers and editors right inside VS Code — and it always looks like it belongs there.
 
