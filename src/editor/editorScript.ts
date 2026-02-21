@@ -239,6 +239,33 @@ export function getEditorScript(): string {
     });
   });
 
+  // Dropdown: click the H button to open/close, click outside to close
+  document.querySelectorAll('.dropdown').forEach(dropdown => {
+    const toggleBtn = dropdown.querySelector('.toolbar-btn');
+    const menu = dropdown.querySelector('.dropdown-content');
+    if (!toggleBtn || !menu) return;
+
+    toggleBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = menu.classList.contains('open');
+      // Close all dropdowns first
+      document.querySelectorAll('.dropdown-content.open').forEach(m => m.classList.remove('open'));
+      if (!isOpen) menu.classList.add('open');
+    });
+
+    // Clicking a dropdown item closes the menu
+    menu.querySelectorAll('.dropdown-item').forEach(item => {
+      item.addEventListener('click', () => {
+        menu.classList.remove('open');
+      });
+    });
+  });
+
+  // Close dropdowns when clicking anywhere else
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-content.open').forEach(m => m.classList.remove('open'));
+  });
+
   editor.addEventListener('input', () => {
     updatePreview();
     autoSave();
