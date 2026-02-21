@@ -937,10 +937,14 @@ async function sendGraph(webview: vscode.Webview, showFns: boolean): Promise<voi
 
 function openFile(filePath: string): void {
   const uri = vscode.Uri.file(filePath);
-  const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === uri.fsPath);
-  if (doc) {
-    vscode.window.showTextDocument(doc, { preserveFocus: false });
+  if (/\.(md|mdx|markdown)$/i.test(filePath)) {
+    vscode.commands.executeCommand('vscode.openWith', uri, 'ultraview.markdown');
   } else {
-    vscode.window.showTextDocument(uri, { preview: false, preserveFocus: false });
+    const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === uri.fsPath);
+    if (doc) {
+      vscode.window.showTextDocument(doc, { preserveFocus: false });
+    } else {
+      vscode.window.showTextDocument(uri, { preview: false, preserveFocus: false });
+    }
   }
 }

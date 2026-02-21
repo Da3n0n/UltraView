@@ -9,7 +9,7 @@ No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewed
 ## Features
 
 
-- **Interactive Code Graph** — Obsidian-style node graph of your entire codebase and notes, with physics simulation, live search, and color customization
+- **Interactive Code Graph** — Obsidian-style node graph of your entire codebase and notes, with physics simulation, live search, and color customizations.
 
 
 
@@ -623,3 +623,7 @@ All edges are deduplicated before the graph is rendered. The physics simulation 
 **Enjoy Ultraview** — feedback and issues welcome on [GitHub]($1).
 
 
+
+| Header 1 | Header 2 |
+|----------|----------|
+| Cell 1   | Cell 2   |
