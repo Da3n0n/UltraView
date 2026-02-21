@@ -22,6 +22,21 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
     panel: vscode.WebviewPanel,
     _token: vscode.CancellationToken
   ): Promise<void> {
+    // If this file is the working-tree (modified) side of an open diff editor, let VS Code
+    // handle it as a plain text editor instead of opening Ultraview.
+    const uri = document.uri;
+    const isInDiff = vscode.window.tabGroups.all.some(group =>
+      group.tabs.some(tab =>
+        tab.input instanceof vscode.TabInputTextDiff &&
+        (tab.input as vscode.TabInputTextDiff).modified.toString() === uri.toString()
+      )
+    );
+    if (isInDiff) {
+      panel.dispose();
+      setTimeout(() => vscode.window.showTextDocument(uri, { preview: true }), 0);
+      return;
+    }
+
     panel.webview.options = { enableScripts: true };
     const filePath = document.uri.fsPath;
     let lastSelfWriteTime = 0;
