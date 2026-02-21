@@ -3,7 +3,7 @@
   "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.40",
+  "version": "0.2.41",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
