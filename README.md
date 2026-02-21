@@ -3,7 +3,7 @@
 []($1)
 
 
-No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers and editors right inside VS Code — and it always looks like it belongs tawdhere.
+No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers and editors right inside VS Code — and it always looks like it belongs .
 
 
 ## Features
