@@ -157,7 +157,6 @@ function buildHtml(wsPath: string): string {
     padding:10px;border-radius:8px;
     border:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
     min-width:180px;z-index:10}
-  #settings-panel.hidden{display:none !important;}
   .ui-hidden #legend{display:none !important;}
   .ui-hidden #settings-panel{display:none !important;}
   .leg{display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:4px}
@@ -203,7 +202,7 @@ function buildHtml(wsPath: string): string {
   <div class="leg" data-type="fn"><div class="dot" style="background:#DCDCAA"></div><span>Function</span></div>
 </div>
 
-<div id="settings-panel" class="hidden">
+<div id="settings-panel">
   <div class="settings-header">Graph Dynamics</div>
   <div class="setting-row">
     <label><span>Repulsion</span><span id="val-repel">9000</span></label>
