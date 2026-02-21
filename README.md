@@ -3,8 +3,7 @@
 []($1)
 
 
-No drivers. No heavy clients. No hassle. Ultraview brings a full suite of vieweddrs and editors right inside VS Code — and it always looks like it belongs there.
-
+No drivers. No heavy clients. No hassle. Ultraview brings a full suite of vieweddrs and editors right inside VS Code — and it always looks like it belongs tawdhere.
 
 
 ## Features
@@ -12,11 +11,22 @@ No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewed
 
 - **Interactive Code Graph** — Obsidian-style node graph of your entire codebase and notes, with physics simulation, live search, and color customization
 
+
+
+
 - **Markdown Editor** — Full rich editor with WYSIWYG preview, split view, toolbar, and Obsidian/GitHub styles
+
+
+
 
 - **Database Viewer** — Browse SQLite, DuckDB, Access, SQL dumps, and index files without leaving VS Code
 
+
+
+
 - **Dynamic Theming** — Every panel, editor, and graph adapts to your active VS Code theme instantly, no restart needed
+
+
 
 
 
@@ -27,12 +37,8 @@ Ultraview scans your workspace and builds a live, interactive node graph showing
 
 ### Node Types
 
-
-
-
 Node
 Represents
-
 
 
 TypeScript / TSX
@@ -51,9 +57,7 @@ Functions / Exports
 Exported functions and classes
 
 
-
 Node colors are fully customizable per type — click any dot in the legend to change it.
-
 
 
 ### Edge Types
@@ -61,11 +65,23 @@ Node colors are fully customizable per type — click any dot in the legend to c
 
 - **import** — Module dependencies (`import` / `require`)
 
+
+
+
 - **wikilink** — Markdown `[[wiki-style]]` links
+
+
+
 
 - **mdlink** — Standard markdown `[text](path)` links
 
+
+
+
 - **url** — External HTTP/HTTPS URLs found in source files
+
+
+
 
 
 ### Interaction
@@ -73,17 +89,38 @@ Node colors are fully customizable per type — click any dot in the legend to c
 
 - **Pan** — Click and drag the canvas
 
+
+
+
 - **Zoom** — Scroll wheel or pinch to zoom
+
+
+
 
 - **Drag nodes** — Reposition individual nodes; they pin in place until released
 
+
+
+
 - **Select** — Click a node to see its file path and open it in the editor
+
+
+
 
 - **Search** — Live filter nodes by name or path
 
+
+
+
 - **Toggle function nodes** — Show or hide function/class nodes with the ƒ( ) button
 
+
+
+
 - **Fit to screen** — Auto-zoom to fit all nodes in view
+
+
+
 
 
 ### Physics Settings
@@ -91,13 +128,9 @@ Node colors are fully customizable per type — click any dot in the legend to c
 The graph uses a configurable force-directed layout. Adjust the sliders in the settings panel:
 
 
-
-
-
 Setting
 Range
 Effect
-
 
 
 Repulsion
@@ -130,15 +163,23 @@ Click any dot in the legend to open the color picker and change that node type's
 
 - Toggle the legend and settings panel with the eye button
 
+
+
+
 - Open the graph as a full editor panel for more space
 
+
+
+
 - Settings panel slides in from the side without covering the graph
+
+
+
 
 
 ### Workspace Scanning
 
 Ultraview scans up to 10,000 files, detecting `.ts`, `.tsx`, `.js`, `.jsx`, `.md`, `.mdx`, and `.markdown` files. Excluded automatically: `node_modules`, `dist`, `.git`, `out`, `.next`, `build`.
-
 
 
 ## Markdown Editor
@@ -148,12 +189,8 @@ Open any `.md`, `.mdx`, or `.markdown` file and Ultraview takes over with a full
 
 ### View Modes
 
-
-
-
 Mode
 Description
-
 
 
 **Rich**
@@ -173,17 +210,38 @@ Editor and preview side by side, synced in real time
 
 - **Headings** — H1 through H6 dropdown
 
+
+
+
 - **Text formatting** — Bold, Italic, Strikethrough, Inline Code
+
+
+
 
 - **Lists** — Bullet, Numbered, Task (checkbox)
 
+
+
+
 - **Block elements** — Blockquote, Horizontal Rule, Code Block, Table
+
+
+
 
 - **Media** — Insert Link, Insert Image
 
+
+
+
 - **Style switcher** — Toggle between Obsidian and GitHub markdown styles
 
+
+
+
 - **View mode selector** — Switch between Rich / Raw / Split
+
+
+
 
 
 ### Styles
@@ -191,7 +249,13 @@ Editor and preview side by side, synced in real time
 
 - **Obsidian** — Custom fonts, colored headings, styled blockquotes and code blocks
 
+
+
+
 - **GitHub** — GitHub-flavored markdown with proper tables, checkboxes, and spacing
+
+
+
 
 
 ### Status Bar
@@ -206,12 +270,8 @@ Rich mode uses TurndownService to convert HTML edits back to clean markdown, so 
 
 ### Keyboard Shortcuts
 
-
-
-
 Shortcut
 Action
-
 
 
 `Ctrl+B` / `Cmd+B`
@@ -230,7 +290,6 @@ Save
 Insert 2-space indent
 
 
-
 ## Database Viewer
 
 Double-click a supported database or SQL file in your explorer and Ultraview opens it in a clean, paginated table view — no external client needed.
@@ -238,12 +297,8 @@ Double-click a supported database or SQL file in your explorer and Ultraview ope
 
 ### Supported Formats
 
-
-
-
 Format
 Extensions
-
 
 
 SQLite
@@ -274,13 +329,28 @@ Index Files
 
 - Paginated table view (default 200 rows per page)
 
+
+
+
 - Column headers with data type info
+
+
+
 
 - NULL values, numbers, and booleans styled distinctly
 
+
+
+
 - Horizontal scroll for wide tables
 
+
+
+
 - Prev / Next pagination controls
+
+
+
 
 
 **Structure**
@@ -296,9 +366,18 @@ Index Files
 
 - Full SQL editor — write and run custom queries
 
+
+
+
 - Results rendered in the same table format
 
+
+
+
 - Error messages shown inline
+
+
+
 
 
 **Stats**
@@ -313,7 +392,6 @@ Index Files
 Searchable table list with row counts for every table in the database.
 
 
-
 ## Dynamic Theming
 
 Ultraview uses native VS Code CSS variables so every panel and editor matches your active theme automatically.
@@ -322,17 +400,27 @@ Ultraview uses native VS Code CSS variables so every panel and editor matches yo
 **How it works:** VS Code exposes theme colors as CSS custom properties (`--vscode-editor-background`, `--vscode-editor-foreground`, `--vscode-sideBar-background`, etc.). Ultraview binds directly to these — when you switch themes, all Ultraview UI updates instantly with no restart required. This works with every color theme, light or dark.
 
 
-
 ## Getting Started
 
 
 - **Install** the extension from the VS Code Marketplace
 
+
+
+
 - **Open a file** — double-click a `.db`, `.sqlite`, `.md`, or other supported file in your explorer
+
+
+
 
 - **Open the Code Graph** — use the Command Palette (`Ctrl+Shift+P`) and run `Ultraview: Open Code Graph`
 
+
+
+
 - **Explore** — browse tables, write queries, edit markdown, or navigate your codebase as a graph
+
+
 
 
 
@@ -343,13 +431,9 @@ All settings live under the `ultraview.*` namespace in VS Code settings.
 
 ### Markdown
 
-
-
-
 Setting
 Default
 Description
-
 
 
 `ultraview.markdown.defaultView`
@@ -389,12 +473,8 @@ Enable word wrap in raw editor
 
 ### Code Graph
 
-
-
-
 Setting
 Description
-
 
 
 `ultraview.codeGraph.nodeColors.*`
@@ -415,13 +495,9 @@ Toggle node labels
 
 ### Database
 
-
-
-
 Setting
 Default
 Description
-
 
 
 `ultraview.database.pageSize`
@@ -449,7 +525,6 @@ Display text for NULL values
 Auto-applied row limit for queries
 
 
-
 ## How It Works
 
 ### Custom Editors
@@ -460,11 +535,23 @@ Ultraview registers as a **Custom Editor** provider for each supported file type
 
 - **sql.js** — WebAssembly SQLite, no native binaries
 
+
+
+
 - **mdb-reader** — Microsoft Access parsing in pure JS
+
+
+
 
 - **marked** — Fast markdown rendering
 
+
+
+
 - **TurndownService** — HTML-to-markdown conversion
+
+
+
 
 
 ### Code Graph
@@ -475,13 +562,21 @@ The graph builder scans your workspace using file-type-specific detectors:
 
 - **TypeScript/JS Detector** — extracts imports, requires, exported functions and classes, and URLs using regex
 
+
+
+
 - **Markdown Detector** — extracts wiki links, markdown links, and URLs
+
+
+
 
 - **Database Detector** — creates nodes for database files
 
 
-All edges are deduplicated before the graph is rendered. The physics simulation runs as a requestAnimationFrame loop with O(n²) repulsion (with a distance cutoff for performance) and spring forces for connected nodes.
 
+
+
+All edges are deduplicated before the graph is rendered. The physics simulation runs as a requestAnimationFrame loop with O(n²) repulsion (with a distance cutoff for performance) and spring forces for connected nodes.
 
 
 ## Release Notes
@@ -491,17 +586,37 @@ All edges are deduplicated before the graph is rendered. The physics simulation 
 
 - Interactive code graph with physics simulation and color customization
 
+
+
+
 - Settings panel with live sliders for graph physics
+
+
+
 
 - Markdown editor with Rich, Raw, and Split view modes
 
+
+
+
 - Obsidian and GitHub markdown styles
+
+
+
 
 - Full toolbar with heading, formatting, list, block, and media tools
 
+
+
+
 - Database viewer with Data, Structure, Query, and Stats tabs
 
+
+
+
 - Dynamic theming across all panels
+
+
 
 
 
