@@ -46,6 +46,21 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
       CodeGraphProvider.openAsPanel(context);
+    }),
+    vscode.window.tabGroups.onDidChangeTabs(({ opened }) => {
+      for (const tab of opened) {
+        // Only intercept plain text tabs (TabInputTextDiff = diff views, which we leave alone)
+        if (tab.input instanceof vscode.TabInputText) {
+          const uri = (tab.input as vscode.TabInputText).uri;
+          if (uri.scheme === 'file' && /\.(md|mdx|markdown)$/i.test(uri.path)) {
+            const textTab = tab;
+            setTimeout(() => {
+              vscode.commands.executeCommand('vscode.openWith', uri, 'ultraview.markdown', textTab.group.viewColumn)
+                .then(() => vscode.window.tabGroups.close(textTab));
+            }, 0);
+          }
+        }
+      }
     })
   );
 }
