@@ -169,7 +169,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,0.3);
   min-width: 120px; z-index: 200; margin-top: 2px;
 }
-.dropdown:hover .dropdown-content { display: block; }
+.dropdown-content.open { display: block; }
 .dropdown-item {
   display: block; width: 100%; padding: 6px 12px;
   background: none; border: none; color: var(--text);
