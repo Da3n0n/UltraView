@@ -39,25 +39,27 @@ Ultraview scans your workspace and builds a live, interactive node graph showing
 
 ### Node Types
 
-Node
-Represents
+Ultraview represents files and symbols as nodes in the graph. Common node types and typical file extensions:
 
-
-TypeScript / TSX
-`.ts`, `.tsx` files
-
-
-JavaScript / JSX
-`.js`, `.jsx` files
-
-
-Markdown
-`.md`, `.mdx` files
-
-
-Functions / Exports
-Exported functions and classes
-
+- **TypeScript / TSX**: `.ts`, `.tsx` (node type: `ts`)
+- **JavaScript / JSX**: `.js`, `.jsx` (node type: `js`)
+- **Markdown**: `.md`, `.mdx`, `.markdown` (node type: `md`)
+- **Python**: `.py` (node type: `py`)
+- **Go**: `.go` (node type: `go`)
+- **C / C++**: `.c`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp` (node types: `c`, `cpp`)
+- **Java**: `.java` (node type: `java`)
+- **Rust**: `.rs` (node type: `rs`)
+- **PHP**: `.php` (node type: `php`)
+- **C# / .NET**: `.cs` (node type: `cs`)
+- **HTML / CSS**: `.html`, `.htm`, `.css` (node types: `html`, `css`)
+- **SQL**: `.sql` and SQL dump files (node type: `sql`)
+- **JSON / YAML / TOML / INI**: `.json`, `.yaml`, `.yml`, `.toml`, `.ini` (node types: `json`, `yaml`, `toml`, `ini`)
+- **Shell scripts**: `.sh`, `.bash`, `.ps1`, `.bat` (node types: `sh`, `ps1`, `bat`)
+- **Build / config files**: `Dockerfile`, `Makefile`, `CMakeLists.txt` (node type uses filename)
+- **Database files**: `.db`, `.sqlite`, `.duckdb`, `.mdb`, `.accdb` (node type: `db`)
+- **Binary / image / misc files**: `.png`, `.jpg`, `.jpeg`, `.svg`, `.ico`, etc. (node type uses extension)
+- **URL nodes**: detected external links become `url` nodes
+- **Function / Export nodes**: extracted functions, classes and exports appear as `fn`/symbol nodes
 
 Node colors are fully customizable per type — click any dot in the legend to change it.
 

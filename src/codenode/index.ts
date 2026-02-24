@@ -47,15 +47,30 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
     const fp = uri.fsPath;
     const ext = path.extname(fp).toLowerCase();
     let text = '';
-    if ([
+
+    // Expand readable/text extensions so we can run detectors on more languages
+    const readableExts = [
       '.ts', '.tsx', '.js', '.jsx',
       '.md', '.mdx', '.markdown',
-      '.sql', '.json', '.yaml', '.yml', '.py', '.sh', '.bat', '.ps1', '.toml', '.ini', '.env', '.txt'
-    ].includes(ext)) {
+      '.sql', '.json', '.yaml', '.yml', '.py', '.sh', '.bat', '.ps1', '.toml', '.ini', '.env', '.txt',
+      '.go', '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.java', '.rs', '.php', '.cs', '.html', '.htm', '.css', '.xml'
+    ];
+
+    const baseName = path.basename(fp).toLowerCase();
+    if (readableExts.includes(ext) || ['dockerfile', 'makefile', 'cmakelists.txt'].includes(baseName)) {
       try { text = fs.readFileSync(fp, 'utf8'); } catch {}
     }
 
-    // TypeScript/JS
+    // Ensure every file becomes at least one node so "all nodes show up for every language"
+    // We only add a generic file node when a specialized detector will not create it.
+    const detectorFileExts = new Set(['.ts', '.tsx', '.js', '.jsx', '.md', '.mdx', '.markdown']);
+    if (!detectorFileExts.has(ext) && !seen.has(fp)) {
+      const type = ext ? ext.slice(1) : baseName; // use extension or basename for files like Dockerfile
+      nodes.push({ id: fp, label: path.basename(fp), type, filePath: fp });
+      seen.add(fp);
+    }
+
+    // TypeScript/JS detector (will add its own file node for JS/TS files)
     const ts = detectTs(fp, text, allFiles);
     for (const n of ts.nodes) if (!seen.has(n.id)) { nodes.push(n); seen.add(n.id); }
     edges.push(...ts.edges);
