@@ -8,7 +8,6 @@ import { IndexProvider } from './providers/indexProvider';
 import { CodeGraphProvider } from './providers/codeGraphProvider';
 import { GitProvider } from './providers/gitProvider';
 import { CustomComments } from './customComments/index';
-import { ProjectsProvider } from './providers/projectsProvider';
 
 
 let customComments: CustomComments;
@@ -55,11 +54,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(
       GitProvider.viewId,
       new GitProvider(context),
-      { webviewOptions: { retainContextWhenHidden: true } }
-    ),
-    vscode.window.registerWebviewViewProvider(
-      ProjectsProvider.viewId,
-      new ProjectsProvider(context),
       { webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.commands.registerCommand('ultraview.openCodeGraph', () => {

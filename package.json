@@ -3,7 +3,7 @@
   "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.62",
+  "version": "0.2.66",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
@@ -240,11 +240,6 @@
           "id": "ultraview-git",
           "title": "Git",
           "icon": "$(git-branch)"
-        },
-        {
-          "id": "ultraview-projects",
-          "title": "Projects",
-          "icon": "$(folder)"
         }
       ]
     },
@@ -261,13 +256,6 @@
           "type": "webview",
           "id": "ultraview.git",
           "name": "Ultraview: Git"
-        }
-      ],
-      "ultraview-projects": [
-        {
-          "type": "webview",
-          "id": "ultraview.projects",
-          "name": "Ultraview: Projects"
         }
       ]
     },

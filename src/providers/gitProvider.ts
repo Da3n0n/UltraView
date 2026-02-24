@@ -20,7 +20,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
   resolveWebviewView(webviewView: vscode.WebviewView) {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
-    webviewView.webview.html = buildGitHtml(this.context);
+    webviewView.webview.html = buildGitHtml();
 
     webviewView.webview.onDidReceiveMessage(async msg => {
       switch (msg.type) {
@@ -47,6 +47,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
         case 'delete': {
           const id = msg.id;
+          console.log('[Ultraview] Delete project:', id);
           this.manager.removeProject(id);
           this.postState();
           this.view?.webview.postMessage({ type: 'projectRemoved', id });
@@ -94,6 +95,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
         case 'removeAccount': {
           const accountId = msg.accountId;
+          console.log('[Ultraview] Remove account:', accountId);
           if (accountId) {
             const keys = this.accounts.listSshKeys().filter(k => k.accountId === accountId);
             for (const key of keys) {
@@ -239,7 +241,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
 
   static openAsPanel(context: vscode.ExtensionContext) {
     const panel = vscode.window.createWebviewPanel('ultraview.git.panel', 'Git Projects', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
-    panel.webview.html = buildGitHtml(context);
+    panel.webview.html = buildGitHtml();
     
     const manager = new GitProjects(context);
     const accounts = new GitAccounts(context);
