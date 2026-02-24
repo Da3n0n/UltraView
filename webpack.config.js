@@ -39,6 +39,16 @@ const config = {
           from: 'node_modules/sql.js/dist/sql-wasm.wasm',
           to: 'sql-wasm.wasm'
         }
+          ,
+          // ensure webview HTML panels are available in the packaged extension
+          {
+            from: 'src/git/gitPanel.html',
+            to: 'gitPanel.html'
+          },
+          {
+            from: 'src/projects/projectsPanel.html',
+            to: 'projectsPanel.html'
+          }
       ]
     })
   ],

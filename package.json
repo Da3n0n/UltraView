@@ -3,7 +3,7 @@
   "icon": "images/icon.png",
   "displayName": "Ultraview – Database & Markdown File Viewer",
   "description": "Instantly preview SQLite, DuckDB, Access, SQL dump files and Markdown directly from the file tree – no connection setup needed. (Ultraview)",
-  "version": "0.2.43",
+  "version": "0.2.62",
   "publisher": "Da3n0n",
   "engines": {
     "vscode": "^1.85.0"
@@ -177,6 +177,55 @@
           "type": "number",
           "default": 1000,
           "description": "Maximum rows returned by auto-queries"
+        },
+        "ultraview.customComments.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable custom font styling for comments"
+        },
+        "ultraview.customComments.fontFamily": {
+          "type": "string",
+          "default": "Fira Code",
+          "description": "Font family for comments (must be installed on your system)"
+        },
+        "ultraview.customComments.fontSize": {
+          "type": "string",
+          "default": "",
+          "description": "Font size for comments (e.g., '14px', '1.1em'). Leave empty to use default."
+        },
+        "ultraview.customComments.fontStyle": {
+          "type": "string",
+          "default": "italic",
+          "enum": [
+            "normal",
+            "italic",
+            "oblique"
+          ],
+          "description": "Font style for comments"
+        },
+        "ultraview.customComments.fontWeight": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "normal",
+            "bold",
+            "100",
+            "200",
+            "300",
+            "400",
+            "500",
+            "600",
+            "700",
+            "800",
+            "900"
+          ],
+          "description": "Font weight for comments. Leave empty to use default."
+        },
+        "ultraview.customComments.color": {
+          "type": "string",
+          "default": "",
+          "description": "Text color for comments (e.g., '#6A9955', 'green'). Leave empty to use theme color."
         }
       }
     },
@@ -186,6 +235,16 @@
           "id": "ultraview-graph",
           "title": "Code Graph",
           "icon": "$(type-hierarchy)"
+        },
+        {
+          "id": "ultraview-git",
+          "title": "Git",
+          "icon": "$(git-branch)"
+        },
+        {
+          "id": "ultraview-projects",
+          "title": "Projects",
+          "icon": "$(folder)"
         }
       ]
     },
@@ -196,6 +255,20 @@
           "id": "ultraview.codeGraph",
           "name": "Code Graph"
         }
+      ],
+      "ultraview-git": [
+        {
+          "type": "webview",
+          "id": "ultraview.git",
+          "name": "Ultraview: Git"
+        }
+      ],
+      "ultraview-projects": [
+        {
+          "type": "webview",
+          "id": "ultraview.projects",
+          "name": "Ultraview: Projects"
+        }
       ]
     },
     "commands": [
@@ -203,6 +276,27 @@
         "command": "ultraview.openCodeGraph",
         "title": "Ultraview: Open Code Graph as Editor",
         "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "ultraview.openUrl",
+        "title": "Ultraview: Open URL",
+        "icon": "$(browser)"
+      },
+      {
+        "command": "ultraview.enableCustomComments",
+        "title": "Ultraview: Enable Custom Comments Font"
+      },
+      {
+        "command": "ultraview.disableCustomComments",
+        "title": "Ultraview: Disable Custom Comments Font"
+      },
+      {
+        "command": "ultraview.toggleCustomComments",
+        "title": "Ultraview: Toggle Custom Comments Font"
+      },
+      {
+        "command": "ultraview.refreshCustomComments",
+        "title": "Ultraview: Refresh Custom Comments CSS"
       }
     ],
     "customEditors": [

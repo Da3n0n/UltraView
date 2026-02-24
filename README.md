@@ -26,6 +26,8 @@ No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewed
 
 - **Dynamic Theming** — Every panel, editor, and graph adapts to your active VS Code theme instantly, no restart needed
 
+- **Quick URL Opener** — Open any URL in VS Code's Simple Browser from the Command Palette with `Ultraview: Open URL`
+
 
 
 
@@ -414,6 +416,10 @@ Ultraview uses native VS Code CSS variables so every panel and editor matches yo
 
 
 - **Open the Code Graph** — use the Command Palette (`Ctrl+Shift+P`) and run `Ultraview: Open Code Graph`
+
+- **Open the built‑in browser** — click the globe icon in the activity bar or run `Ultraview: Open Browser`. The browser appears in the **sidebar** under that container; it includes an address bar and navigation buttons. (A separate command `Ultraview: Open Browser in Panel` can open the same content in a full‑editor tab if you prefer.)
+
+- **Open any URL in VS Code** — open the Command Palette (`Ctrl+Shift+P`) and run `Ultraview: Open URL`. Enter any URL and it will open in VS Code's built‑in Simple Browser tab in the main editor area.
 
 
 

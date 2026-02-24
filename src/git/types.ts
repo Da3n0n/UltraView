@@ -1,0 +1,38 @@
+export interface GitProject {
+  id: string;
+  name: string;
+  path: string;
+  repoUrl?: string;
+  gitProfile?: string; // profile id used for commits
+}
+
+export interface GitProfile {
+  id: string;
+  name: string;
+  userName?: string;
+  userEmail?: string;
+}
+
+export type GitProvider = 'github' | 'gitlab' | 'azure';
+
+export interface GitAccount {
+  id: string;
+  provider: GitProvider;
+  username: string;
+  email?: string;
+  token?: string; // HTTPS token (encrypted in storage)
+  sshKeyId?: string; // Reference to SSH key
+  tokenExpiresAt?: number;
+  isGlobal: boolean;
+  createdAt: number;
+}
+
+export interface SshKey {
+  id: string;
+  name: string;
+  publicKey: string;
+  privateKeyPath?: string;
+  provider: GitProvider;
+  accountId: string;
+  createdAt: number;
+}
