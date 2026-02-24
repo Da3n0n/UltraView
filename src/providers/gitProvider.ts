@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { buildGitHtml } from '../git/gitUi';
 import { GitProjects } from '../git/gitProjects';
 import { GitAccounts } from '../git/gitAccounts';
-import { GitProfile, GitAccount, GitProvider as GitProviderType, SshKey } from '../git/types';
+import { GitProfile, GitProvider as GitProviderType } from '../git/types';
 
 export class GitProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'ultraview.git';
@@ -156,7 +156,30 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
         case 'addToken': {
           const accountId = msg.accountId;
-          const token = await vscode.window.showInputBox({ prompt: 'Enter GitHub personal access token (with repo scope)', password: true });
+          const account = this.accounts.getAccount(accountId);
+          if (!account) break;
+
+          if (account.provider === 'github') {
+            const method = await vscode.window.showQuickPick([
+              { label: 'browser', description: 'Sign in via browser (OAuth)' },
+              { label: 'manual', description: 'Paste personal access token' }
+            ], { placeHolder: 'How to add token?' });
+            if (!method) break;
+            if (method.label === 'browser') {
+              try {
+                const session = await vscode.authentication.getSession('github', ['repo', 'read:user', 'user:email'], { createIfNone: true });
+                this.accounts.updateAccount(accountId, { token: session.accessToken });
+                this.postState();
+                this.view?.webview.postMessage({ type: 'accountUpdated', accountId });
+                vscode.window.showInformationMessage(`Token updated for ${account.username} via GitHub OAuth.`);
+              } catch (err: any) {
+                vscode.window.showErrorMessage(`OAuth failed: ${err?.message ?? String(err)}`);
+              }
+              break;
+            }
+          }
+
+          const token = await vscode.window.showInputBox({ prompt: 'Enter personal access token (with repo scope)', password: true });
           if (token) {
             this.accounts.updateAccount(accountId, { token });
             this.postState();
@@ -190,37 +213,47 @@ export class GitProvider implements vscode.WebviewViewProvider {
       { label: 'gitlab', description: 'GitLab' },
       { label: 'azure', description: 'Azure DevOps' }
     ], { placeHolder: 'Select provider' });
-    
+
     if (!provider) return;
-    
-    const username = await vscode.window.showInputBox({ prompt: 'GitHub username' });
+
+    // Offer browser OAuth for supported providers
+    const browserProviders: Record<string, string> = { github: 'github', gitlab: 'gitlab', azure: 'microsoft' };
+    const authMethodItems: { label: string; description: string }[] = [
+      { label: 'browser', description: 'Sign in via browser (OAuth) — recommended' },
+      { label: 'ssh', description: 'Generate SSH key' },
+      { label: 'token', description: 'Enter personal access token manually' }
+    ];
+
+    const authMethod = await vscode.window.showQuickPick(authMethodItems, { placeHolder: 'How do you want to authenticate?' });
+    if (!authMethod) return;
+
+    if (authMethod.label === 'browser') {
+      await this._addAccountViaOAuth(provider.label as GitProviderType, browserProviders[provider.label]);
+      return;
+    }
+
+    const username = await vscode.window.showInputBox({ prompt: `${provider.label} username` });
     if (!username) return;
-    
+
     const isGlobal = await vscode.window.showQuickPick([
       { label: 'global', description: 'Use for all workspaces' },
       { label: 'local', description: 'Use only for current workspace' }
     ], { placeHolder: 'Account scope' });
-    
+
     const account = this.accounts.addAccount({
       provider: provider.label as GitProviderType,
       username,
       isGlobal: isGlobal?.label === 'global'
     });
-    
+
     const activeRepo = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length ? vscode.workspace.workspaceFolders[0].uri.fsPath : '';
     if (account.isGlobal) {
       this.accounts.setGlobalAccount(account.id);
     } else if (activeRepo) {
       this.accounts.setLocalAccount(activeRepo, account.id);
     }
-    
-    const action = await vscode.window.showQuickPick([
-      { label: 'ssh', description: 'Generate SSH key (recommended)' },
-      { label: 'token', description: 'Add HTTPS token' },
-      { label: 'skip', description: 'Skip for now' }
-    ], { placeHolder: 'How do you want to authenticate?' });
-    
-    if (action?.label === 'ssh') {
+
+    if (authMethod.label === 'ssh') {
       const keyName = await vscode.window.showInputBox({ prompt: 'SSH key name (optional)', value: `ultraview-${username}` });
       const key = await this.accounts.generateSshKey(account.id, account.provider, keyName || undefined);
       const { sshKeyUrl } = this.accounts.getProviderUrl(account.provider);
@@ -228,15 +261,77 @@ export class GitProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage(`SSH key generated and copied to clipboard! Opening ${account.provider} settings...`);
       vscode.env.openExternal(vscode.Uri.parse(sshKeyUrl));
       this.accounts.updateAccount(account.id, { sshKeyId: key.id });
-    } else if (action?.label === 'token') {
+    } else if (authMethod.label === 'token') {
       const token = await vscode.window.showInputBox({ prompt: 'Enter personal access token', password: true });
       if (token) {
         this.accounts.updateAccount(account.id, { token });
       }
     }
-    
+
     this.postState();
     this.view?.webview.postMessage({ type: 'accountAdded', account });
+  }
+
+  private async _addAccountViaOAuth(gitProvider: GitProviderType, vsCodeProviderId: string): Promise<void> {
+    const scopes: Record<string, string[]> = {
+      github: ['repo', 'read:user', 'user:email'],
+      gitlab: ['read_user', 'api'],
+      microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default']
+    };
+
+    try {
+      const session = await vscode.authentication.getSession(vsCodeProviderId, scopes[vsCodeProviderId] || [], { createIfNone: true });
+      const username = session.account.label;
+      const token = session.accessToken;
+
+      // Try to fetch email from provider API
+      let email: string | undefined;
+      try {
+        if (gitProvider === 'github') {
+          const res = await fetch('https://api.github.com/user', {
+            headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Ultraview-VSCode' }
+          });
+          if (res.ok) {
+            const data = await res.json() as { email?: string };
+            email = data.email || undefined;
+          }
+        } else if (gitProvider === 'gitlab') {
+          const res = await fetch('https://gitlab.com/api/v4/user', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+            const data = await res.json() as { email?: string };
+            email = data.email || undefined;
+          }
+        }
+      } catch {
+        // email is optional
+      }
+
+      const isGlobal = await vscode.window.showQuickPick([
+        { label: 'global', description: 'Use for all workspaces' },
+        { label: 'local', description: 'Use only for current workspace' }
+      ], { placeHolder: 'Account scope' });
+
+      const account = this.accounts.addAccount({ provider: gitProvider, username, email, token, isGlobal: isGlobal?.label === 'global' });
+
+      const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+      if (account.isGlobal) {
+        this.accounts.setGlobalAccount(account.id);
+      } else if (activeRepo) {
+        this.accounts.setLocalAccount(activeRepo, account.id);
+      }
+
+      vscode.window.showInformationMessage(`Signed in as ${username} via ${gitProvider}!`);
+      this.postState();
+      this.view?.webview.postMessage({ type: 'accountAdded', account });
+    } catch (err: any) {
+      if (err?.name === 'Error' && String(err?.message).includes('No authentication provider')) {
+        vscode.window.showErrorMessage(`Browser sign-in for ${gitProvider} requires the ${gitProvider} extension to be installed. Use manual token instead.`);
+      } else {
+        vscode.window.showErrorMessage(`OAuth sign-in failed: ${err?.message ?? String(err)}`);
+      }
+    }
   }
 
   static openAsPanel(context: vscode.ExtensionContext) {
@@ -334,22 +429,75 @@ export class GitProvider implements vscode.WebviewViewProvider {
             { label: 'azure', description: 'Azure DevOps' }
           ], { placeHolder: 'Select provider' });
           if (!provider) break;
-          const username = await vscode.window.showInputBox({ prompt: 'Username' });
+
+          const browserProviders: Record<string, string> = { github: 'github', gitlab: 'gitlab', azure: 'microsoft' };
+          const authMethod = await vscode.window.showQuickPick([
+            { label: 'browser', description: 'Sign in via browser (OAuth) — recommended' },
+            { label: 'ssh', description: 'Generate SSH key' },
+            { label: 'token', description: 'Enter personal access token manually' }
+          ], { placeHolder: 'How do you want to authenticate?' });
+          if (!authMethod) break;
+
+          if (authMethod.label === 'browser') {
+            const vsCodeProviderId = browserProviders[provider.label];
+            const scopes: Record<string, string[]> = {
+              github: ['repo', 'read:user', 'user:email'],
+              gitlab: ['read_user', 'api'],
+              microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default']
+            };
+            try {
+              const session = await vscode.authentication.getSession(vsCodeProviderId, scopes[vsCodeProviderId] || [], { createIfNone: true });
+              const username = session.account.label;
+              const token = session.accessToken;
+              let email: string | undefined;
+              try {
+                if (provider.label === 'github') {
+                  const res = await fetch('https://api.github.com/user', { headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Ultraview-VSCode' } });
+                  if (res.ok) { const d = await res.json() as { email?: string }; email = d.email || undefined; }
+                } else if (provider.label === 'gitlab') {
+                  const res = await fetch('https://gitlab.com/api/v4/user', { headers: { 'Authorization': `Bearer ${token}` } });
+                  if (res.ok) { const d = await res.json() as { email?: string }; email = d.email || undefined; }
+                }
+              } catch { /* email optional */ }
+              const isGlobal = await vscode.window.showQuickPick([
+                { label: 'global', description: 'Use for all workspaces' },
+                { label: 'local', description: 'Use only for current workspace' }
+              ], { placeHolder: 'Account scope' });
+              const account = accounts.addAccount({ provider: provider.label as GitProviderType, username, email, token, isGlobal: isGlobal?.label === 'global' });
+              const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+              if (account.isGlobal) { accounts.setGlobalAccount(account.id); } else if (activeRepo) { accounts.setLocalAccount(activeRepo, account.id); }
+              vscode.window.showInformationMessage(`Signed in as ${username} via ${provider.label}!`);
+              panel.webview.postMessage({ type: 'accountAdded', account });
+            } catch (err: any) {
+              if (String(err?.message).includes('No authentication provider')) {
+                vscode.window.showErrorMessage(`Browser sign-in for ${provider.label} requires the ${provider.label} extension. Use manual token instead.`);
+              } else {
+                vscode.window.showErrorMessage(`OAuth sign-in failed: ${err?.message ?? String(err)}`);
+              }
+            }
+            break;
+          }
+
+          const username = await vscode.window.showInputBox({ prompt: `${provider.label} username` });
           if (!username) break;
           const isGlobal = await vscode.window.showQuickPick([
             { label: 'global', description: 'Use for all workspaces' },
             { label: 'local', description: 'Use only for current workspace' }
           ], { placeHolder: 'Account scope' });
-          const account = accounts.addAccount({
-            provider: provider.label as GitProviderType,
-            username,
-            isGlobal: isGlobal?.label === 'global'
-          });
-          const activeRepo = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length ? vscode.workspace.workspaceFolders[0].uri.fsPath : '';
-          if (account.isGlobal) {
-            accounts.setGlobalAccount(account.id);
-          } else if (activeRepo) {
-            accounts.setLocalAccount(activeRepo, account.id);
+          const account = accounts.addAccount({ provider: provider.label as GitProviderType, username, isGlobal: isGlobal?.label === 'global' });
+          const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+          if (account.isGlobal) { accounts.setGlobalAccount(account.id); } else if (activeRepo) { accounts.setLocalAccount(activeRepo, account.id); }
+          if (authMethod.label === 'ssh') {
+            const keyName = await vscode.window.showInputBox({ prompt: 'SSH key name (optional)', value: `ultraview-${username}` });
+            const key = await accounts.generateSshKey(account.id, account.provider, keyName || undefined);
+            const { sshKeyUrl } = accounts.getProviderUrl(account.provider);
+            await vscode.env.clipboard.writeText(key.publicKey);
+            vscode.window.showInformationMessage(`SSH key generated and copied to clipboard! Opening ${account.provider} settings...`);
+            vscode.env.openExternal(vscode.Uri.parse(sshKeyUrl));
+            accounts.updateAccount(account.id, { sshKeyId: key.id });
+          } else if (authMethod.label === 'token') {
+            const token = await vscode.window.showInputBox({ prompt: 'Enter personal access token (with repo scope)', password: true });
+            if (token) { accounts.updateAccount(account.id, { token }); }
           }
           panel.webview.postMessage({ type: 'accountAdded', account });
           break;
@@ -412,6 +560,28 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
         case 'addToken': {
           const accountId = msg.accountId;
+          const acct = accounts.getAccount(accountId);
+          if (!acct) break;
+
+          if (acct.provider === 'github') {
+            const method = await vscode.window.showQuickPick([
+              { label: 'browser', description: 'Sign in via browser (OAuth)' },
+              { label: 'manual', description: 'Paste personal access token' }
+            ], { placeHolder: 'How to add token?' });
+            if (!method) break;
+            if (method.label === 'browser') {
+              try {
+                const session = await vscode.authentication.getSession('github', ['repo', 'read:user', 'user:email'], { createIfNone: true });
+                accounts.updateAccount(accountId, { token: session.accessToken });
+                panel.webview.postMessage({ type: 'accountUpdated', accountId });
+                vscode.window.showInformationMessage(`Token updated for ${acct.username} via GitHub OAuth.`);
+              } catch (err: any) {
+                vscode.window.showErrorMessage(`OAuth failed: ${err?.message ?? String(err)}`);
+              }
+              break;
+            }
+          }
+
           const token = await vscode.window.showInputBox({ prompt: 'Enter personal access token (with repo scope)', password: true });
           if (token) {
             accounts.updateAccount(accountId, { token });

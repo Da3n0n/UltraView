@@ -10,7 +10,7 @@ import { colorPickerStyle, colorPickerScript } from '../ui/colorPicker';
 interface GNode {
   id: string;
   label: string;
-  type: 'ts' | 'md' | 'other' | 'fn';
+  type: 'ts' | 'md' | 'other' | 'fn' | 'url';
   filePath: string;
   parentId?: string;    // for function nodes, parent file id
 }
@@ -66,13 +66,27 @@ async function buildGraph(includeFns: boolean): Promise<GraphData> {
   // Use the new universal code graph builder
   const cg = await buildCodeGraph();
   // Map CodeNode/CodeEdge to GNode/GEdge for the view
-  const nodes: GNode[] = cg.nodes.map(n => ({
-    id: n.id,
-    label: n.label,
-    type: n.type === 'fn' ? 'fn' : n.type === 'md' ? 'md' : n.type === 'db' ? 'other' : (['ts', 'js', 'tsx', 'jsx'].includes(n.type) ? 'ts' : 'other'),
-    filePath: n.filePath ?? '',
-    parentId: (n.meta && typeof n.meta.parent === 'string') ? n.meta.parent : undefined
-  }));
+  const nodes: GNode[] = cg.nodes.map(n => {
+    // Preserve URL nodes so the webview can open external links
+    if (n.type === 'url') {
+      const url = (n.meta && typeof n.meta.url === 'string') ? n.meta.url : (typeof n.id === 'string' && n.id.startsWith('url:') ? n.id.slice(4) : (n.filePath ?? ''));
+      return {
+        id: n.id,
+        label: n.label,
+        type: 'url' as const,
+        filePath: url,
+        parentId: (n.meta && typeof n.meta.parent === 'string') ? n.meta.parent : undefined
+      } as GNode;
+    }
+
+    return {
+      id: n.id,
+      label: n.label,
+      type: n.type === 'fn' ? 'fn' : n.type === 'md' ? 'md' : n.type === 'db' ? 'other' : (['ts', 'js', 'tsx', 'jsx'].includes(n.type) ? 'ts' : 'other'),
+      filePath: n.filePath ?? '',
+      parentId: (n.meta && typeof n.meta.parent === 'string') ? n.meta.parent : undefined
+    } as GNode;
+  });
   const edges: GEdge[] = cg.edges.map(e => ({
     source: e.source,
     target: e.target,
@@ -646,7 +660,11 @@ canvas.addEventListener('click', e => {
     const nd = nodes[hit];
     document.getElementById('st-selected').textContent = '● ' + nd.label;
     if (!canvas._didDrag) {
-      vscode.postMessage({ type: 'openFile', path: nd.filePath });
+      if (nd.type === 'url') {
+        vscode.postMessage({ type: 'openUrl', url: nd.filePath });
+      } else {
+        vscode.postMessage({ type: 'openFile', path: nd.filePath });
+      }
     }
   } else {
     document.getElementById('st-selected').textContent = '';
@@ -857,6 +875,9 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
         sendGraph(panel.webview, msg.showFns ?? false);
       } else if (msg.type === 'openFile') {
         openFile(msg.path);
+      } else if (msg.type === 'openUrl') {
+        // open URL using Ultraview's openUrl command (uses Simple Browser)
+        try { vscode.commands.executeCommand('ultraview.openUrl', String(msg.url)); } catch (e) { /* ignore */ }
       }
       // openPanel from inside a panel = no-op
     });
@@ -870,6 +891,9 @@ export class CodeGraphProvider implements vscode.WebviewViewProvider {
         break;
       case 'openFile':
         openFile(msg.path as string);
+        break;
+      case 'openUrl':
+        try { vscode.commands.executeCommand('ultraview.openUrl', String(msg.url)); } catch (e) { /* ignore */ }
         break;
       case 'openPanel':
         vscode.commands.executeCommand('ultraview.openCodeGraph');
