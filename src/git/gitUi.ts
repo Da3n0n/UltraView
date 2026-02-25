@@ -48,7 +48,7 @@ export function buildGitHtml(): string {
       padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;
       background:var(--vscode-button-secondaryBackground,rgba(128,128,128,.15));
       border:1px solid var(--vscode-panel-border,rgba(128,128,128,.3));
-      color:var(--vscode-editor-foreground)}
+      color:var(--vscode-editor-foreground);white-space:nowrap;flex-shrink:0}
     .btn-action:hover{background:var(--vscode-list-hoverBackground)}
     .btn-primary{
       background:var(--vscode-button-background,rgba(0,120,212,.9));
@@ -77,7 +77,7 @@ export function buildGitHtml(): string {
     .project-actions{display:flex;gap:4px;flex-shrink:0;margin-left:8px}
     .account-badge{
       display:inline-block;padding:2px 6px;margin-left:6px;
-      font-size:9px;border-radius:3px}
+      font-size:9px;border-radius:3px;flex-shrink:0;white-space:nowrap}
     .account-badge.global{background:rgba(0,120,212,.2);color:#4fc1ff}
     .account-badge.local{background:rgba(255,166,0,.2);color:#ffa600}
     .account-item{
@@ -87,10 +87,16 @@ export function buildGitHtml(): string {
       border:1px solid var(--vscode-panel-border,rgba(128,128,128,.2));
       border-radius:6px;transition:background .15s}
     .account-item:hover{background:var(--vscode-list-hoverBackground,rgba(255,255,255,.05))}
-    .account-info{flex:1;min-width:0}
-    .account-name{font-weight:600;font-size:12px;margin-bottom:2px}
-    .account-meta{font-size:10px;color:var(--vscode-descriptionForeground)}
-    .account-actions{display:flex;gap:4px;flex-shrink:0;margin-left:8px}
+    .account-info{flex:1;min-width:0;overflow:hidden}
+    .account-name{font-weight:600;font-size:12px;margin-bottom:2px;display:flex;align-items:center;white-space:nowrap}
+    .account-name-text{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .account-meta{font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .account-actions{display:flex;gap:4px;flex-shrink:0;margin-left:8px;overflow-x:auto;-ms-overflow-style:none;scrollbar-width:none}
+    .account-actions::-webkit-scrollbar{display:none}
+    @media (max-width: 380px) {
+      .account-actions{gap:2px;}
+      .btn-action{padding:3px 6px;font-size:10px;}
+    }
     .empty-state{
       text-align:center;padding:20px;color:var(--vscode-descriptionForeground);
       font-size:11px}
@@ -222,7 +228,8 @@ function renderAccounts() {
     if (isLocal) badges += '<span class="account-badge local">✓ local</span>';
     div.innerHTML = 
       '<div class="account-info">' +
-        '<div class="account-name">' + esc(acc.username) + 
+        '<div class="account-name">' + 
+          '<span class="account-name-text">' + esc(acc.username) + '</span>' +
           '<span class="account-badge" style="background:rgba(128,128,128,.2)">' + esc(acc.provider) + '</span>' +
           badges +
         '</div>' +
@@ -232,13 +239,10 @@ function renderAccounts() {
         '</div>' +
       '</div>' +
       '<div class="account-actions">' +
-        '<button class="btn-action btn-sm" data-action="apply" data-id="' + esc(acc.id) + '" title="Apply git credentials to workspace now">⚡ Apply</button>' +
-        '<button class="btn-action btn-sm" data-action="ssh" data-id="' + esc(acc.id) + '">SSH</button>' +
-        '<button class="btn-action btn-sm" data-action="token" data-id="' + esc(acc.id) + '">Token</button>' +
-        (isGlobal ? '<button class="btn-action btn-sm" data-action="unsetGlobal" data-id="' + esc(acc.id) + '" title="Unset global">✗ Global</button>' : '<button class="btn-action btn-sm" data-action="setGlobal" data-id="' + esc(acc.id) + '" title="Set as global">⬤ Global</button>') +
-        (isLocal ? '<button class="btn-action btn-sm" data-action="unsetLocal" data-id="' + esc(acc.id) + '" title="Unset local">✗ Local</button>' : '<button class="btn-action btn-sm" data-action="setLocal" data-id="' + esc(acc.id) + '" title="Set for this workspace">⬤ Local</button>') +
-        '<button class="btn-action btn-sm" data-action="delete" data-id="' + esc(acc.id) + '">×</button>' +
+        '<button class="btn-action btn-sm" data-action="auth" data-id="' + esc(acc.id) + '" title="Manage Authentication">🔒</button>' +
+        '<button class="btn-action btn-sm" data-action="delete" data-id="' + esc(acc.id) + '" title="Remove Account">×</button>' +
       '</div>';
+    div.dataset.id = acc.id;
     accountList.appendChild(div);
   });
 }
@@ -324,23 +328,19 @@ accountList.addEventListener('click', function(e) {
   var action = btn.dataset.action;
   var id = btn.dataset.id;
   
-  if (action === 'apply') {
-    vscode.postMessage({ type: 'applyCredentials', accountId: id, workspaceUri: window.activeRepo });
-  } else if (action === 'ssh') {
-    vscode.postMessage({ type: 'generateSshKey', accountId: id });
-  } else if (action === 'token') {
-    vscode.postMessage({ type: 'addToken', accountId: id });
-  } else if (action === 'setGlobal') {
-    vscode.postMessage({ type: 'setGlobalAccount', accountId: id });
-  } else if (action === 'unsetGlobal') {
-    vscode.postMessage({ type: 'setGlobalAccount', accountId: null });
-  } else if (action === 'setLocal') {
-    vscode.postMessage({ type: 'setLocalAccount', workspaceUri: window.activeRepo, accountId: id });
-  } else if (action === 'unsetLocal') {
-    vscode.postMessage({ type: 'setLocalAccount', workspaceUri: window.activeRepo, accountId: null });
+  if (action === 'auth') {
+    vscode.postMessage({ type: 'authOptions', accountId: id });
   } else if (action === 'delete') {
     vscode.postMessage({ type: 'removeAccount', accountId: id });
   }
+});
+
+accountList.addEventListener('contextmenu', function(e) {
+  var item = e.target.closest('.account-item');
+  if (!item) return;
+  e.preventDefault();
+  var id = item.dataset.id;
+  vscode.postMessage({ type: 'accountContextMenu', accountId: id, workspaceUri: window.activeRepo });
 });
 
 vscode.postMessage({ type: 'ready' });
