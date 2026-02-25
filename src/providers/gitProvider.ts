@@ -4,6 +4,7 @@ import { GitProjects } from '../git/gitProjects';
 import { GitAccounts } from '../git/gitAccounts';
 import { GitProfile, GitProvider as GitProviderType } from '../git/types';
 import { applyLocalAccount, applyGlobalAccount, clearLocalAccount } from '../git/gitCredentials';
+import { SharedStore } from '../sync/sharedStore';
 
 export class GitProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'ultraview.git';
@@ -11,17 +12,22 @@ export class GitProvider implements vscode.WebviewViewProvider {
   private context: vscode.ExtensionContext;
   private manager: GitProjects;
   private accounts: GitAccounts;
+  private store: SharedStore;
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, store: SharedStore) {
     this.context = context;
-    this.manager = new GitProjects(context);
-    this.accounts = new GitAccounts(context);
+    this.store = store;
+    this.manager = new GitProjects(context, store);
+    this.accounts = new GitAccounts(context, store);
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView) {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: true };
     webviewView.webview.html = buildGitHtml();
+
+    // Hot-reload when another IDE writes the shared sync file
+    this.store.on('changed', () => this.postState());
 
     webviewView.webview.onDidReceiveMessage(async msg => {
       switch (msg.type) {
@@ -382,12 +388,28 @@ export class GitProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  static openAsPanel(context: vscode.ExtensionContext) {
+  static openAsPanel(context: vscode.ExtensionContext, store: SharedStore) {
     const panel = vscode.window.createWebviewPanel('ultraview.git.panel', 'Git Projects', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
     panel.webview.html = buildGitHtml();
 
-    const manager = new GitProjects(context);
-    const accounts = new GitAccounts(context);
+    const manager = new GitProjects(context, store);
+    const accounts = new GitAccounts(context, store);
+
+    // Hot-reload when another IDE writes the shared sync file
+    const onChanged = () => {
+      const projects = manager.listProjects();
+      const profiles = manager.listProfiles();
+      const currentProfileId = context.workspaceState.get<string | null>('ultraview.git.currentProfile', null);
+      const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+      const accountList = accounts.listAccounts();
+      const globalAccount = accounts.getGlobalAccount();
+      const localAccount = activeRepo ? accounts.getLocalAccount(activeRepo) : undefined;
+      const sshKeys = accounts.listSshKeys();
+      panel.webview.postMessage({ type: 'state', projects, profiles, currentProfileId, activeRepo, accounts: accountList, globalAccount, localAccount, sshKeys });
+    };
+    store.on('changed', onChanged);
+    panel.onDidDispose(() => store.off('changed', onChanged));
+
     panel.webview.onDidReceiveMessage(async msg => {
       switch (msg.type) {
         case 'ready': {

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { GitProject, GitProfile } from './types';
-// Lightweight UUID helper to avoid extra dependency
+import { SharedStore } from '../sync/sharedStore';
+
 function simpleUuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = (Math.random() * 16) | 0;
@@ -9,33 +10,31 @@ function simpleUuid(): string {
   });
 }
 
-const KEY_PROJECTS = 'ultraview.git.projects.v1';
-const KEY_PROFILES = 'ultraview.git.profiles.v1';
-
 export class GitProjects {
-  private context: vscode.ExtensionContext;
+  constructor(
+    private context: vscode.ExtensionContext,
+    private store: SharedStore
+  ) { }
 
-  constructor(context: vscode.ExtensionContext) {
-    this.context = context;
-  }
+  // ── Projects ─────────────────────────────────────────────────────────────
 
   listProjects(): GitProject[] {
-    return this.context.globalState.get<GitProject[]>(KEY_PROJECTS, []);
+    return this.store.read().projects as GitProject[];
   }
 
   saveProjects(list: GitProject[]) {
-    this.context.globalState.update(KEY_PROJECTS, list);
+    this.store.write({ projects: list });
   }
 
   addProject(p: Partial<GitProject>): GitProject {
-    const projects = this.listProjects();
+    const projects = this.store.read().projects as GitProject[];
 
     // Prevent duplicate entries for the same path
     if (p.path) {
       const existingIdx = projects.findIndex(existing => existing.path === p.path);
       if (existingIdx >= 0) {
         projects[existingIdx] = { ...projects[existingIdx], ...p };
-        this.saveProjects(projects);
+        this.store.write({ projects });
         return projects[existingIdx];
       }
     }
@@ -45,46 +44,47 @@ export class GitProjects {
       name: p.name || 'New Project',
       path: p.path || '',
       repoUrl: p.repoUrl,
-      gitProfile: p.gitProfile
+      gitProfile: p.gitProfile,
     };
     projects.push(proj);
-    this.saveProjects(projects);
+    this.store.write({ projects });
     return proj;
   }
 
   updateProject(id: string, patch: Partial<GitProject>) {
-    const projects = this.listProjects();
+    const projects = this.store.read().projects as GitProject[];
     const idx = projects.findIndex(p => p.id === id);
     if (idx >= 0) {
       projects[idx] = { ...projects[idx], ...patch };
-      this.saveProjects(projects);
+      this.store.write({ projects });
     }
   }
 
   removeProject(id: string) {
-    const projects = this.listProjects().filter(p => p.id !== id);
-    this.saveProjects(projects);
+    const projects = (this.store.read().projects as GitProject[]).filter(p => p.id !== id);
+    this.store.write({ projects });
   }
 
-  // Profiles
+  // ── Profiles ─────────────────────────────────────────────────────────────
+
   listProfiles(): GitProfile[] {
-    return this.context.globalState.get<GitProfile[]>(KEY_PROFILES, []);
+    return this.store.read().profiles as GitProfile[];
   }
 
   saveProfiles(list: GitProfile[]) {
-    this.context.globalState.update(KEY_PROFILES, list);
+    this.store.write({ profiles: list });
   }
 
   addProfile(p: Partial<GitProfile>): GitProfile {
-    const profiles = this.listProfiles();
+    const profiles = this.store.read().profiles as GitProfile[];
     const prof: GitProfile = {
       id: p.id || simpleUuid(),
       name: p.name || 'profile',
       userName: p.userName,
-      userEmail: p.userEmail
+      userEmail: p.userEmail,
     };
     profiles.push(prof);
-    this.saveProfiles(profiles);
+    this.store.write({ profiles });
     return prof;
   }
 
