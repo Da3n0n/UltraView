@@ -82,10 +82,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 .code-wrap pre,
 .code-wrap textarea {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  margin: 0; padding: 16px 18px;
-  font-family: 'Cascadia Code','Fira Code',Consolas,monospace;
-  font-size: 13px; line-height: 1.65;
-  tab-size: 2; white-space: pre; overflow: auto;
+  margin: 0; padding: 20px 24px;
+  font-family: 'Cascadia Code','Fira Code',Consolas,'Courier New',monospace;
+  font-size: 13px; line-height: 1.7;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: break-word;
+  overflow: auto;
   border: none; outline: none;
 }
 
@@ -130,7 +134,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 /* The infinite canvas */
 #canvas {
   flex: 1; position: relative; overflow: hidden;
-  cursor: grab;
+  cursor: default;
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
 #canvas.grabbing { cursor: grabbing; }

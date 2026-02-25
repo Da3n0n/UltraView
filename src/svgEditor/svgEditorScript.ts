@@ -184,6 +184,7 @@ function hideError()    { errorBar.classList.remove('open'); }
 function applyTransform() {
   viewport.style.transform = 'translate('+panX+'px,'+panY+'px) scale('+scale+')';
   zoomLabel.textContent = Math.round(scale*100)+'%';
+  if (selectedEl) updateOverlay();
 }
 
 function fitToCanvas(svgEl) {
@@ -239,26 +240,26 @@ canvas.addEventListener('wheel', function(e) {
   zoomBy(factor, e.clientX - rect.left, e.clientY - rect.top);
 }, { passive: false });
 
-let dragging = false, dragStartX=0, dragStartY=0, panStartX=0, panStartY=0;
-let didDrag = false;
+// Middle-mouse pan
+let panning = false, panDragStartX=0, panDragStartY=0, panStartX=0, panStartY=0;
 
 canvas.addEventListener('mousedown', function(e) {
-  if (e.button !== 0) return;
-  dragging = true; didDrag = false;
-  dragStartX = e.clientX; dragStartY = e.clientY;
-  panStartX  = panX;      panStartY  = panY;
+  if (e.button !== 1) return; // middle only
+  e.preventDefault();
+  panning = true;
+  panDragStartX = e.clientX; panDragStartY = e.clientY;
+  panStartX = panX; panStartY = panY;
   canvas.classList.add('grabbing');
 });
 window.addEventListener('mousemove', function(e) {
-  if (!dragging) return;
-  const dx = e.clientX - dragStartX;
-  const dy = e.clientY - dragStartY;
-  if (Math.abs(dx)+Math.abs(dy) > 4) didDrag = true;
-  panX = panStartX + dx; panY = panStartY + dy;
+  if (!panning) return;
+  panX = panStartX + (e.clientX - panDragStartX);
+  panY = panStartY + (e.clientY - panDragStartY);
   applyTransform();
 });
-window.addEventListener('mouseup', function() {
-  dragging = false;
+window.addEventListener('mouseup', function(e) {
+  if (e.button !== 1) return;
+  panning = false;
   canvas.classList.remove('grabbing');
 });
 
@@ -349,21 +350,26 @@ function attachSelectionHandlers() {
 }
 
 function handleSvgClick(e) {
-  if (didDrag) return;
   e.stopPropagation();
   if (e.target === currentSvgEl) { deselectElement(); return; }
   selectElement(e.target);
 }
 
-function selectElement(el) {
-  selectedEl = el;
-  const rect = el.getBoundingClientRect();
+function updateOverlay() {
+  if (!selectedEl) return;
+  // getBoundingClientRect gives screen coords; subtract canvas origin
+  const rect       = selectedEl.getBoundingClientRect();
   const canvasRect = canvas.getBoundingClientRect();
-  selOverlay.style.display = 'block';
   selOverlay.style.left   = (rect.left - canvasRect.left) + 'px';
   selOverlay.style.top    = (rect.top  - canvasRect.top)  + 'px';
   selOverlay.style.width  = rect.width  + 'px';
   selOverlay.style.height = rect.height + 'px';
+}
+
+function selectElement(el) {
+  selectedEl = el;
+  selOverlay.style.display = 'block';
+  updateOverlay();
   openInspector(el);
 }
 
@@ -376,6 +382,8 @@ function deselectElement() {
 canvas.addEventListener('click', function(e) {
   if (e.target === canvas || e.target === viewport) deselectElement();
 });
+// Prevent browser auto-scroll mode on middle click
+canvas.addEventListener('auxclick', function(e) { if (e.button === 1) e.preventDefault(); });
 
 // Inspector
 function openInspector(el) {
@@ -405,14 +413,7 @@ function buildInspectorRows(el) {
     valEl.title = attr.value;
     valEl.addEventListener('input', function() {
       el.setAttribute(attr.name, valEl.value);
-      if (selectedEl === el) {
-        const rect = el.getBoundingClientRect();
-        const canvasRect = canvas.getBoundingClientRect();
-        selOverlay.style.left   = (rect.left - canvasRect.left) + 'px';
-        selOverlay.style.top    = (rect.top  - canvasRect.top)  + 'px';
-        selOverlay.style.width  = rect.width  + 'px';
-        selOverlay.style.height = rect.height + 'px';
-      }
+      if (selectedEl === el) updateOverlay();
       scheduleCodeSync();
     });
     valEl.addEventListener('blur', function() { valEl.title = valEl.value; });

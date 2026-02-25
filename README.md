@@ -10,6 +10,7 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 | :--- | :--- |
 | 🗄️ **Database Viewer** | Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed |
 | 📝 **Markdown Editor** | Full-featured WYSIWYG editor with Rich, Raw, and Split modes — Obsidian and GitHub styles |
+| 🖼️ **SVG Editor** | Pan/zoom preview, syntax-highlighted code editor, Split mode, element inspector, and live sync |
 | 🔗 **Code Graph** | Interactive node graph showing how your files, imports, and markdown links connect — like Obsidian, but for code |
 | 👤 **Git Account Manager** | Manage multiple GitHub, GitLab, and Azure DevOps accounts from the sidebar |
 | 🔑 **Apply Credentials** | Set a Git account per-project or globally — Ultraview writes the identity and embeds credentials into your remote automatically |
@@ -222,6 +223,66 @@ Live word count, line count, and character count at the bottom of the editor.
 | `Tab` | Insert 2-space indent |
 
 
+## SVG Editor
+
+Open any `.svg` file and Ultraview replaces the default viewer with an interactive editor featuring pan/zoom preview, syntax-highlighted code, and live split editing.
+
+
+### View Modes
+
+| Mode | Description |
+| :--- | :--- |
+| **Text** | Full-width syntax-highlighted code editor with word wrap |
+| **Split** | Code editor on the left, live preview on the right — updates as you type |
+| **Preview** | Full canvas pan/zoom view — no code visible |
+
+
+### Preview Canvas
+
+- **Scroll wheel** — zoom in/out centered on the cursor
+- **Middle mouse drag** — pan the canvas
+- **Left click** — select an SVG element and open the inspector
+- **Fit** — scales the SVG to fill the available canvas with padding
+- **1:1** — renders at true pixel size, centered
+- **Zoom in / Zoom out** — step zoom buttons
+
+
+### Element Inspector
+
+Click any element in the preview to open a floating inspector panel showing all attributes. Edit attribute values directly — the code editor syncs automatically. The selection overlay tracks the element as you pan and zoom.
+
+
+### Code Editor
+
+- Syntax highlighting with distinct colors for tags, attributes, values, comments, and processing instructions
+- Word wrap with comfortable padding for easy reading and editing
+- Undo/redo stack (up to 200 snapshots)
+- `Tab` inserts a 2-space indent
+- `Ctrl+S` / `Cmd+S` saves immediately; auto-save fires 800 ms after the last change
+
+
+### Theming
+
+The editor background, toolbar, and inspector all use VS Code's sidebar CSS variables (`--vscode-sideBar-background`, `--vscode-editor-foreground`, etc.) so it matches your active theme automatically.
+
+
+### Shortcuts
+
+| Shortcut | Action |
+| :--- | :--- |
+| `Scroll wheel` | Zoom in/out (centered on cursor) |
+| `Middle drag` | Pan the canvas |
+| `Left click` | Select element |
+| `F` | Fit SVG to canvas |
+| `1` | Reset to 1:1 scale |
+| `+` / `-` | Step zoom |
+| `Escape` | Deselect element |
+| `Ctrl+Z` / `Cmd+Z` | Undo |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | Redo |
+| `Ctrl+S` / `Cmd+S` | Save |
+| `Tab` | Insert 2-space indent |
+
+
 ## Code Graph
 
 Ultraview scans your workspace and builds a live, interactive node graph showing how files, imports, and markdown links connect — like Obsidian, but for your entire codebase.
@@ -337,7 +398,7 @@ All settings live under the `ultraview.*` namespace (`Ctrl+,` → search "Ultrav
 
 
 
-- **Open a file** — double-click a `.db`, `.sqlite`, `.md`, or other supported file in Explorer
+- **Open a file** — double-click a `.db`, `.sqlite`, `.md`, `.svg`, or other supported file in Explorer
 
 
 
