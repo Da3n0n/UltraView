@@ -4,6 +4,7 @@ import { DuckDbProvider } from './providers/duckdbProvider';
 import { AccessProvider } from './providers/accessProvider';
 import { SqlDumpProvider } from './providers/sqlDumpProvider';
 import { MarkdownProvider } from './providers/markdownProvider';
+import { SvgProvider } from './providers/svgProvider';
 import { IndexProvider } from './providers/indexProvider';
 import { CodeGraphProvider } from './providers/codeGraphProvider';
 import { GitProvider } from './providers/gitProvider';
@@ -48,6 +49,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerCustomEditorProvider(
       'ultraview.markdown',
       new MarkdownProvider(context),
+      { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
+    ),
+    vscode.window.registerCustomEditorProvider(
+      'ultraview.svg',
+      new SvgProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerCustomEditorProvider(
