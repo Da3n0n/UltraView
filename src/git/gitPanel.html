@@ -115,12 +115,7 @@
   <button class="tbtn" id="btn-profiles" title="Manage profiles">⚙ Profiles</button>
 </div>
 <div id="content">
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Active Workspace</span>
-    </div>
-    <div id="active-workspace" class="muted">—</div>
-  </div>
+ 
 
   <div class="section">
     <div class="section-header">
@@ -180,7 +175,6 @@ var projectCount = document.getElementById('project-count');
 var stProjects = document.getElementById('st-projects');
 var stProfile = document.getElementById('st-profile');
 var profileSelect = document.getElementById('profileSelect');
-var activeWorkspace = document.getElementById('active-workspace');
 var accountList = document.getElementById('account-list');
 var activeAccountEl = document.getElementById('active-account');
 var stAccount = document.getElementById('st-account');
@@ -294,7 +288,7 @@ function updateUI(msg) {
   localAccount = msg.localAccount || null;
   allSshKeys = msg.sshKeys || [];
   
-  activeWorkspace.textContent = msg.activeRepo || '—';
+  // active workspace display removed
   
   renderProfiles();
   renderProjects();

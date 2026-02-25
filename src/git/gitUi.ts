@@ -111,12 +111,7 @@ export function buildGitHtml(): string {
   <button class="tbtn" id="btn-accounts" title="Manage accounts">⚡ Accounts</button>
 </div>
 <div id="content">
-  <div class="section">
-    <div class="section-header">
-      <span class="section-title">Active Workspace</span>
-    </div>
-    <div id="active-workspace" class="muted">—</div>
-  </div>
+
 
   <div class="section" id="accounts-section">
     <div class="section-header">
@@ -158,7 +153,6 @@ var allSshKeys = [];
 var projectList = document.getElementById('project-list');
 var emptyState = document.getElementById('empty-state');
 var stProjects = document.getElementById('st-projects');
-var activeWorkspace = document.getElementById('active-workspace');
 var accountList = document.getElementById('account-list');
 var activeAccountEl = document.getElementById('active-account');
 var stAccount = document.getElementById('st-account');
@@ -258,8 +252,6 @@ function updateUI(msg) {
   localAccount = msg.localAccount || null;
   allSshKeys = msg.sshKeys || [];
   window.activeRepo = msg.activeRepo || '';
-
-  activeWorkspace.textContent = msg.activeRepo || '—';
 
   renderProjects();
   renderAccounts();
