@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { getEditorStyles, getEditorHtml } from './editorHtml';
 import { getEditorScript } from './editorScript';
-import { MarkdownStyle } from '../settings/markdownSettings';
 
-export function buildEditorPage(_webview: vscode.Webview, style: MarkdownStyle = 'obsidian'): string {
+
+export function buildEditorPage(_webview: vscode.Webview): string {
   const styles = getEditorStyles();
-  const html = getEditorHtml(style);
+  const html = getEditorHtml();
   const script = getEditorScript();
 
   return /* html */`<!DOCTYPE html>

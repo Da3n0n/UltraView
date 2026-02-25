@@ -8,6 +8,9 @@ Install it once in **VS Code**, **Cursor**, **Windsurf**, or any VS Code-compati
 
 ## Features at a Glance
 
+FeatureUsageCodegraphGenerate Obsidian Like dynamic code graph of your codebase or notes rightin VS Code
+
+
 ## Cross-IDE Sync — Projects &amp; Git Accounts
 
 **Add an account in Cursor. Open VS Code. It's already there.**
@@ -51,9 +54,6 @@ Ultraview stores all projects and Git accounts in a single shared file on your l
 ### First Run &amp; Migration
 
 On first activation, Ultraview automatically migrates any existing accounts and projects from your IDE's internal storage into the shared file and shows a confirmation notification. This migration runs once per IDE — after that everything comes from the shared file.
-
-
-
 
 
 ### Setting the Sync Folder

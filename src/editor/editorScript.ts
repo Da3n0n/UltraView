@@ -462,17 +462,6 @@ export function getEditorScript(): string {
     }
   });
 
-  const styleSelect = document.getElementById('style-select');
-  if (styleSelect) {
-    styleSelect.addEventListener('change', () => {
-      const app = document.getElementById('app');
-      if (app) {
-        app.className = app.className.replace(/style-\\w+/g, '');
-        app.classList.add('style-' + styleSelect.value);
-      }
-    });
-  }
-
   window.addEventListener('message', (e) => {
     const msg = e.data;
     if (msg.type === 'setContent') {

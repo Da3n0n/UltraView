@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import { MarkdownDocument, buildEditorPage } from '../editor';
-import { getMarkdownSettings } from '../settings/markdownSettings';
 
 export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDocument> {
   private readonly _onDidChangeCustomDocument = new vscode.EventEmitter<vscode.CustomDocumentEditEvent<MarkdownDocument>>();
   onDidChangeCustomDocument = this._onDidChangeCustomDocument.event;
 
-  constructor(_ctx: vscode.ExtensionContext) {}
+  constructor(_ctx: vscode.ExtensionContext) { }
 
   openCustomDocument(
     uri: vscode.Uri,
@@ -58,7 +57,7 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
       panel.webview.postMessage({ type: 'setContent', content: raw });
     };
 
-    panel.webview.html = buildEditorPage(panel.webview, getMarkdownSettings().style);
+    panel.webview.html = buildEditorPage(panel.webview);
 
     panel.webview.onDidReceiveMessage((msg: { type: string; content?: string }) => {
       switch (msg.type) {
@@ -95,6 +94,6 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
   }
 
   backupCustomDocument(_document: MarkdownDocument, context: vscode.CustomDocumentBackupContext, _cancellation: vscode.CancellationToken): Thenable<vscode.CustomDocumentBackup> {
-    return Promise.resolve({ id: context.destination.fsPath, delete: () => {} });
+    return Promise.resolve({ id: context.destination.fsPath, delete: () => { } });
   }
 }
