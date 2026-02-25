@@ -15,6 +15,40 @@ export function getEditorScript(): string {
   let currentMode = 'preview'; // 'preview' (RICH), 'split', 'edit' (RAW)
   let lastFocusedArea = 'preview'; // 'editor' or 'preview'
 
+  // --- Undo / redo stack for the preview (contenteditable) pane ---
+  const previewUndoStack = [];
+  const previewRedoStack = [];
+  let previewUndoLocked = false;
+
+  function snapshotPreview() {
+    if (previewUndoLocked) return;
+    previewUndoStack.push({ html: preview.innerHTML, sel: null });
+    previewRedoStack.length = 0;
+    if (previewUndoStack.length > 200) previewUndoStack.shift();
+  }
+
+  function previewUndo() {
+    if (previewUndoStack.length === 0) return;
+    previewRedoStack.push({ html: preview.innerHTML });
+    const snap = previewUndoStack.pop();
+    previewUndoLocked = true;
+    preview.innerHTML = snap.html;
+    previewUndoLocked = false;
+    updateRawFromPreview();
+    autoSave();
+  }
+
+  function previewRedo() {
+    if (previewRedoStack.length === 0) return;
+    previewUndoStack.push({ html: preview.innerHTML });
+    const snap = previewRedoStack.pop();
+    previewUndoLocked = true;
+    preview.innerHTML = snap.html;
+    previewUndoLocked = false;
+    updateRawFromPreview();
+    autoSave();
+  }
+
   editor.addEventListener('focus', () => { lastFocusedArea = 'editor'; });
   preview.addEventListener('focus', () => { lastFocusedArea = 'preview'; });
 
@@ -85,40 +119,59 @@ export function getEditorScript(): string {
   }
 
   // --- Raw textarea operations ---
+  // We use document.execCommand('insertText') instead of setRangeText so
+  // every insertion goes through the browser's native undo/redo stack.
+
+  function insertTextUndo(text) {
+    // execCommand('insertText') replaces the current selection with "text"
+    // and registers the change in the browser undo history.
+    if (!document.execCommand('insertText', false, text)) {
+      // Fallback for browsers that don't support it (shouldn't happen in webview)
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+      editor.value = editor.value.substring(0, start) + text + editor.value.substring(end);
+      editor.selectionStart = editor.selectionEnd = start + text.length;
+    }
+  }
 
   function wrapSelection(before, after, placeholder) {
     after = after || before;
+    editor.focus({ preventScroll: true });
     const start = editor.selectionStart;
     const end = editor.selectionEnd;
     const sel = editor.value.substring(start, end) || placeholder || '';
     const replacement = before + sel + after;
-    editor.setRangeText(replacement, start, end, 'end');
-    editor.focus({ preventScroll: true });
+    // Select the text we want to replace, then insert via execCommand
+    editor.setSelectionRange(start, end);
+    insertTextUndo(replacement);
     updatePreview();
     autoSave();
   }
 
   function insertAtCursor(text, moveCursor) {
+    editor.focus({ preventScroll: true });
     const start = editor.selectionStart;
-    editor.setRangeText(text, start, start, 'end');
+    editor.setSelectionRange(start, start);
+    insertTextUndo(text);
     if (moveCursor) {
       editor.selectionStart = editor.selectionEnd = start + moveCursor;
     }
-    editor.focus({ preventScroll: true });
     updatePreview();
     autoSave();
   }
 
   function insertLine(prefix) {
+    editor.focus({ preventScroll: true });
     const start = editor.selectionStart;
     const lineStart = editor.value.lastIndexOf('\\n', start - 1) + 1;
-    editor.setRangeText(prefix, lineStart, lineStart, 'end');
-    editor.focus({ preventScroll: true });
+    editor.setSelectionRange(lineStart, lineStart);
+    insertTextUndo(prefix);
     updatePreview();
     autoSave();
   }
 
   function toggleHeading(level) {
+    editor.focus({ preventScroll: true });
     const start = editor.selectionStart;
     const lineStart = editor.value.lastIndexOf('\\n', start - 1) + 1;
     const lineEnd = editor.value.indexOf('\\n', start);
@@ -132,8 +185,8 @@ export function getEditorScript(): string {
     } else {
       newLine = prefix + line;
     }
-    editor.setRangeText(newLine, lineStart, fullLineEnd, 'end');
-    editor.focus({ preventScroll: true });
+    editor.setSelectionRange(lineStart, fullLineEnd);
+    insertTextUndo(newLine);
     updatePreview();
     autoSave();
   }
@@ -149,24 +202,28 @@ export function getEditorScript(): string {
   }
 
   function wrapInPreview(execCmd) {
+    snapshotPreview();
     preview.focus();
     document.execCommand(execCmd);
     syncPreviewToEditor();
   }
 
   function formatBlockInPreview(tag) {
+    snapshotPreview();
     preview.focus();
     document.execCommand('formatBlock', false, tag);
     syncPreviewToEditor();
   }
 
   function insertHtmlInPreview(html) {
+    snapshotPreview();
     preview.focus();
     document.execCommand('insertHTML', false, html);
     syncPreviewToEditor();
   }
 
   function insertCodeInPreview() {
+    snapshotPreview();
     preview.focus();
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
@@ -271,6 +328,11 @@ export function getEditorScript(): string {
     autoSave();
   });
 
+  preview.addEventListener('beforeinput', () => {
+    // Snapshot before every user keystroke so our manual stack stays in sync
+    snapshotPreview();
+  });
+
   preview.addEventListener('input', () => {
     clearTimeout(previewSyncTimeout);
     previewSyncTimeout = setTimeout(() => {
@@ -285,6 +347,9 @@ export function getEditorScript(): string {
         case 'b': e.preventDefault(); actions.bold(); break;
         case 'i': e.preventDefault(); actions.italic(); break;
         case 's': e.preventDefault(); save(); break;
+        // Ctrl+Z / Ctrl+Y are handled natively by the browser for the
+        // textarea because we use execCommand('insertText').
+        // Nothing extra needed here.
       }
     }
     if (e.key === 'Tab') {
@@ -298,11 +363,13 @@ export function getEditorScript(): string {
       switch(e.key.toLowerCase()) {
         case 'b':
           e.preventDefault();
+          snapshotPreview();
           document.execCommand('bold');
           syncPreviewToEditor();
           break;
         case 'i':
           e.preventDefault();
+          snapshotPreview();
           document.execCommand('italic');
           syncPreviewToEditor();
           break;
@@ -310,9 +377,65 @@ export function getEditorScript(): string {
           e.preventDefault();
           save();
           break;
+        case 'z':
+          e.preventDefault();
+          if (e.shiftKey) {
+            previewRedo();
+          } else {
+            previewUndo();
+          }
+          break;
+        case 'y':
+          e.preventDefault();
+          previewRedo();
+          break;
       }
     }
   });
+
+  // --- Ctrl+Scroll zoom ---
+  let zoomLevel = 100; // percent
+  const MIN_ZOOM = 50;
+  const MAX_ZOOM = 300;
+  const ZOOM_STEP = 10;
+
+  function applyZoom() {
+    const z = zoomLevel / 100;
+    const editPane = document.getElementById('edit-pane');
+    const previewPane = document.getElementById('preview-pane');
+    if (editPane) editPane.style.zoom = String(z);
+    if (previewPane) previewPane.style.zoom = String(z);
+  }
+
+  function handleZoomWheel(e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.deltaY < 0) {
+      zoomLevel = Math.min(MAX_ZOOM, zoomLevel + ZOOM_STEP);
+    } else {
+      zoomLevel = Math.max(MIN_ZOOM, zoomLevel - ZOOM_STEP);
+    }
+    applyZoom();
+  }
+
+  // Attach to both panes and the window so scroll anywhere in the editor works
+  preview.addEventListener('wheel', handleZoomWheel, { passive: false });
+  editor.addEventListener('wheel', handleZoomWheel, { passive: false });
+  wrap.addEventListener('wheel', handleZoomWheel, { passive: false });
+
+  // Ctrl+0 to reset zoom — handled on both panes
+  function handleZoomReset(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+      e.preventDefault();
+      zoomLevel = 100;
+      applyZoom();
+    }
+  }
+
+  editor.addEventListener('keydown', handleZoomReset);
+  preview.addEventListener('keydown', handleZoomReset);
+  document.addEventListener('keydown', handleZoomReset);
 
   viewMode.addEventListener('change', () => {
     currentMode = viewMode.value;
