@@ -29,6 +29,17 @@ export class GitProjects {
 
   addProject(p: Partial<GitProject>): GitProject {
     const projects = this.listProjects();
+
+    // Prevent duplicate entries for the same path
+    if (p.path) {
+      const existingIdx = projects.findIndex(existing => existing.path === p.path);
+      if (existingIdx >= 0) {
+        projects[existingIdx] = { ...projects[existingIdx], ...p };
+        this.saveProjects(projects);
+        return projects[existingIdx];
+      }
+    }
+
     const proj: GitProject = {
       id: p.id || simpleUuid(),
       name: p.name || 'New Project',
