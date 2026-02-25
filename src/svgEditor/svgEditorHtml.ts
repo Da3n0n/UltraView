@@ -16,6 +16,15 @@ export function getSvgEditorStyles(): string {
   --sel-border:  #4fc3f7;
   --sel-fill:    rgba(79,195,247,0.08);
   --radius: 5px;
+  /* ── Syntax token colours ── */
+  --tok-tag:     #4ec9b0;
+  --tok-attr:    #9cdcfe;
+  --tok-val:     #ce9178;
+  --tok-punct:   #808080;
+  --tok-comment: #6a9955;
+  --tok-pi:      #c586c0;
+  --tok-text:    var(--text);
+  --tok-cdata:   #d7ba7d;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
@@ -64,14 +73,52 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 #edit-pane.visible { display: flex; }
 
-#svg-code {
-  flex: 1; width: 100%; resize: none; border: none;
-  background: var(--bg); color: var(--text);
-  font-family: 'Cascadia Code','Fira Code',Consolas,monospace;
-  font-size: 13px; line-height: 1.65; padding: 16px 18px;
-  outline: none; tab-size: 2; caret-color: var(--text);
-  overflow: auto; white-space: pre;
+/* Highlight-overlay technique: pre behind, textarea on top */
+.code-wrap {
+  flex: 1; position: relative; overflow: hidden;
 }
+
+/* shared metrics – must match exactly between pre and textarea */
+.code-wrap pre,
+.code-wrap textarea {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  margin: 0; padding: 16px 18px;
+  font-family: 'Cascadia Code','Fira Code',Consolas,monospace;
+  font-size: 13px; line-height: 1.65;
+  tab-size: 2; white-space: pre; overflow: auto;
+  border: none; outline: none;
+}
+
+#highlight-layer {
+  pointer-events: none;
+  background: var(--bg);
+  color: var(--tok-text);
+  /* don't clip the scrollbar, let textarea handle overflow */
+  overflow: hidden;
+  word-break: normal; user-select: none;
+}
+/* Token spans */
+.tok-tag     { color: var(--tok-tag);     }
+.tok-attr    { color: var(--tok-attr);    }
+.tok-val     { color: var(--tok-val);     }
+.tok-punct   { color: var(--tok-punct);   }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-pi      { color: var(--tok-pi);      }
+.tok-cdata   { color: var(--tok-cdata);   }
+.tok-text    { color: var(--tok-text);    }
+
+#svg-code {
+  background: transparent;
+  /* hide text — the highlight layer renders it */
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--text); /* but keep caret visible */
+  resize: none; z-index: 1;
+  /* selection colour preserved by browser even on transparent text */
+  tab-size: 2;
+}
+#svg-code::selection { background: rgba(79,195,247,0.25); }
+#svg-code:focus { outline: none; }
 
 /* ── Preview pane ── */
 #preview-pane {
@@ -244,7 +291,10 @@ export function getSvgEditorHtml(): string {
 
     <!-- code pane -->
     <div id="edit-pane">
-      <textarea id="svg-code" spellcheck="false" placeholder="<!-- SVG code here -->"></textarea>
+      <div class="code-wrap">
+        <pre id="highlight-layer" aria-hidden="true"></pre>
+        <textarea id="svg-code" spellcheck="false" autocorrect="off" autocapitalize="off"></textarea>
+      </div>
     </div>
 
     <!-- preview pane -->

@@ -6,6 +6,7 @@ const vscode = acquireVsCodeApi();
 
 // ── DOM refs ────────────────────────────────────────────────────────────
 const codeTA      = document.getElementById('svg-code');
+const hlPre       = document.getElementById('highlight-layer');
 const canvas      = document.getElementById('canvas');
 const viewport    = document.getElementById('viewport');
 const selOverlay  = document.getElementById('sel-overlay');
@@ -22,6 +23,170 @@ const statDims    = document.getElementById('stat-dims');
 const editPane    = document.getElementById('edit-pane');
 const previewPane = document.getElementById('preview-pane');
 const editorWrap  = document.getElementById('editor-wrap');
+
+// ── Syntax highlighting ───────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function tokenizeSvg(src) {
+  // Tokenise XML/SVG into coloured spans (no external deps).
+  let out = '';
+  let i = 0;
+  const n = src.length;
+
+  while (i < n) {
+    // --- Comment ---
+    if (src.startsWith('<!--', i)) {
+      const end = src.indexOf('-->', i);
+      const raw = end === -1 ? src.slice(i) : src.slice(i, end + 3);
+      out += '<span class="tok-comment">' + escHtml(raw) + '</span>';
+      i += raw.length; continue;
+    }
+    // --- CDATA ---
+    if (src.startsWith('<![CDATA[', i)) {
+      const end = src.indexOf(']]>', i);
+      const raw = end === -1 ? src.slice(i) : src.slice(i, end + 3);
+      out += '<span class="tok-cdata">' + escHtml(raw) + '</span>';
+      i += raw.length; continue;
+    }
+    // --- Processing instruction ---
+    if (src.startsWith('<?', i)) {
+      const end = src.indexOf('?>', i);
+      const raw = end === -1 ? src.slice(i) : src.slice(i, end + 2);
+      out += '<span class="tok-pi">' + escHtml(raw) + '</span>';
+      i += raw.length; continue;
+    }
+    // --- DOCTYPE ---
+    if (src.startsWith('<!', i)) {
+      const end = src.indexOf('>', i);
+      const raw = end === -1 ? src.slice(i) : src.slice(i, end + 1);
+      out += '<span class="tok-pi">' + escHtml(raw) + '</span>';
+      i += raw.length; continue;
+    }
+    // --- Opening / closing tag ---
+    if (src[i] === '<') {
+      const isClose = src[i+1] === '/';
+      // find tag name
+      let j = i + 1 + (isClose ? 1 : 0);
+      const tagNameStart = j;
+      while (j < n && !/[\s>\/]/.test(src[j])) j++;
+      const tagName = src.slice(tagNameStart, j);
+
+      out += '<span class="tok-tag">' + escHtml(src.slice(i, tagNameStart)) + '</span>';
+      out += '<span class="tok-tag">' + escHtml(tagName) + '</span>';
+      i = j;
+
+      // parse attributes until '>' or '/>'
+      while (i < n && src[i] !== '>') {
+        if (src[i] === '/' && src[i+1] === '>') {
+          out += '<span class="tok-punct">/></span>'; i += 2; break;
+        }
+        // whitespace
+        if (/\s/.test(src[i])) {
+          out += escHtml(src[i]); i++; continue;
+        }
+        // attribute name
+        const attrStart = i;
+        while (i < n && !/[\s=>\/<]/.test(src[i])) i++;
+        if (i > attrStart) {
+          out += '<span class="tok-attr">' + escHtml(src.slice(attrStart, i)) + '</span>';
+        }
+        // equals
+        if (src[i] === '=') {
+          out += '<span class="tok-punct">=</span>'; i++;
+          // quoted value
+          if (i < n && (src[i] === '"' || src[i] === "'")) {
+            const q = src[i];
+            let k = i + 1;
+            while (k < n && src[k] !== q) k++;
+            const raw = src.slice(i, k + 1);
+            out += '<span class="tok-val">' + escHtml(raw) + '</span>';
+            i = k + 1;
+          }
+        }
+      }
+      if (i < n && src[i] === '>') {
+        out += '<span class="tok-punct">></span>'; i++;
+      }
+      continue;
+    }
+    // --- Plain text / entities ---
+    let txtStart = i;
+    while (i < n && src[i] !== '<') i++;
+    const txt = src.slice(txtStart, i);
+    out += escHtml(txt);
+  }
+  return out;
+}
+
+function syncHighlight() {
+  hlPre.innerHTML = tokenizeSvg(codeTA.value) + '\n'; // trailing \n prevents last line collapse
+  // Keep scroll in sync
+  hlPre.scrollTop  = codeTA.scrollTop;
+  hlPre.scrollLeft = codeTA.scrollLeft;
+}
+
+// Keep highlight scroll in sync as user scrolls the textarea
+codeTA.addEventListener('scroll', () => {
+  hlPre.scrollTop  = codeTA.scrollTop;
+  hlPre.scrollLeft = codeTA.scrollLeft;
+});
+
+// ── Custom undo / redo stack ──────────────────────────────────────────────
+// The native textarea undo breaks because we mutate .value directly for Tab
+// and for Ctrl+Z we want fine-grained text snapshots.
+const MAX_HISTORY = 200;
+const undoStack   = [];   // { value, selStart, selEnd }
+const redoStack   = [];
+let lastSnapshot  = '';
+let snapshotTimer = null;
+
+function takeSnapshot(immediate) {
+  const val = codeTA.value;
+  if (val === lastSnapshot) return;
+  lastSnapshot = val;
+  undoStack.push({ value: val, selStart: codeTA.selectionStart, selEnd: codeTA.selectionEnd });
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack.length = 0;  // new edit clears redo
+}
+
+function scheduleSnapshot() {
+  clearTimeout(snapshotTimer);
+  snapshotTimer = setTimeout(takeSnapshot, 400);
+}
+
+function applySnapshot(snap) {
+  codeTA.value = snap.value;
+  codeTA.selectionStart = snap.selStart;
+  codeTA.selectionEnd   = snap.selEnd;
+  syncHighlight();
+  updateStats();
+  autoSave();
+  if (currentMode !== 'text') renderPreview(true);
+}
+
+function doUndo() {
+  // If current content != last snapshot, push current first so it can be redone
+  const cur = codeTA.value;
+  if (cur !== (undoStack.length ? undoStack[undoStack.length-1].value : '')) {
+    takeSnapshot(true);
+  }
+  if (undoStack.length < 2) return; // need at least 2 (current + previous)
+  const current = undoStack.pop();
+  redoStack.push(current);
+  const snap = undoStack[undoStack.length - 1];
+  lastSnapshot = snap.value;
+  applySnapshot(snap);
+}
+
+function doRedo() {
+  if (!redoStack.length) return;
+  const snap = redoStack.pop();
+  undoStack.push(snap);
+  lastSnapshot = snap.value;
+  applySnapshot(snap);
+}
 
 // ── State ────────────────────────────────────────────────────────────────
 const initialMode = (typeof window.__SVG_DEFAULT_VIEW__ === 'string')
@@ -60,7 +225,7 @@ function fitToCanvas(svgEl) {
   let vw, vh;
   const vb = svgEl.getAttribute('viewBox');
   if (vb) {
-    const p = vb.trim().split(/[\\s,]+/);
+    const p = vb.trim().split(/[\s,]+/);
     if (p.length === 4) { vw = parseFloat(p[2]); vh = parseFloat(p[3]); }
   }
   if (!vw || !vh) {
@@ -332,7 +497,9 @@ function scheduleCodeSync() {
     // Serialize only the SVG element, not the entire viewport div
     const serializer = new XMLSerializer();
     const svgStr = serializer.serializeToString(currentSvgEl);
+    takeSnapshot(true); // capture before overwriting
     codeTA.value = svgStr;
+    syncHighlight();
     updateStats();
     autoSave();
   }, 120);
@@ -432,6 +599,8 @@ viewModeEl.addEventListener('change', () => {
 
 let renderTimeout = null;
 codeTA.addEventListener('input', () => {
+  syncHighlight();
+  scheduleSnapshot();
   updateStats();
   autoSave();
   if (currentMode !== 'text') {
@@ -441,11 +610,26 @@ codeTA.addEventListener('input', () => {
 });
 
 codeTA.addEventListener('keydown', e => {
+  // Undo / Redo
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+    e.preventDefault();
+    doUndo();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+    e.preventDefault();
+    doRedo();
+    return;
+  }
+  // Tab → 2-space indent
   if (e.key === 'Tab') {
     e.preventDefault();
+    takeSnapshot(true); // snapshot before mutating
     const s = codeTA.selectionStart, en = codeTA.selectionEnd;
     codeTA.value = codeTA.value.substring(0,s) + '  ' + codeTA.value.substring(en);
     codeTA.selectionStart = codeTA.selectionEnd = s + 2;
+    syncHighlight();
+    scheduleSnapshot();
     updateStats(); autoSave();
     if (currentMode !== 'text') renderPreview(true);
   }
@@ -459,6 +643,12 @@ window.addEventListener('message', e => {
   const msg = e.data;
   if (msg.type === 'setContent') {
     codeTA.value = msg.content;
+    syncHighlight();
+    // Seed the undo stack with the initial content
+    lastSnapshot = msg.content;
+    undoStack.length = 0;
+    undoStack.push({ value: msg.content, selStart: 0, selEnd: 0 });
+    redoStack.length = 0;
     updateStats();
     if (currentMode !== 'text') {
       // fit on first load
