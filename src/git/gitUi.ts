@@ -130,7 +130,7 @@ export function buildGitHtml(): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">Projects</span>
-      <span id="project-count" class="muted">0</span>
+      <button class="btn-action btn-sm" id="btn-add-project">+ Add Current</button>
     </div>
     <ul id="project-list" class="project-list"></ul>
     <div id="empty-state" class="empty-state hidden">
@@ -157,7 +157,6 @@ var allSshKeys = [];
 
 var projectList = document.getElementById('project-list');
 var emptyState = document.getElementById('empty-state');
-var projectCount = document.getElementById('project-count');
 var stProjects = document.getElementById('st-projects');
 var activeWorkspace = document.getElementById('active-workspace');
 var accountList = document.getElementById('account-list');
@@ -200,7 +199,6 @@ function renderProjects() {
   }
   
   var count = filtered.length;
-  projectCount.textContent = count;
   stProjects.textContent = count + ' project' + (count !== 1 ? 's' : '');
 }
 
@@ -208,9 +206,9 @@ function renderAccounts() {
   var effectiveAccount = localAccount || globalAccount;
   if (effectiveAccount) {
     var acc = effectiveAccount;
-    var scope = localAccount ? ' (local)' : ' (global)';
+    var scope = localAccount ? 'local' : 'global';
     activeAccountEl.innerHTML = '<span class="account-name">' + esc(acc.username) + '</span>' +
-      '<span class="account-badge ' + (acc.isGlobal ? 'global' : 'local') + '">' + esc(acc.provider) + scope + '</span>';
+      '<span class="account-badge ' + scope + '">' + esc(acc.provider) + ' (' + scope + ')</span>';
     stAccount.textContent = 'Account: ' + esc(acc.username);
   } else {
     activeAccountEl.textContent = 'No account set';
@@ -219,15 +217,20 @@ function renderAccounts() {
   
   accountList.innerHTML = '';
   allAccounts.forEach(function(acc) {
-    var isEffective = effectiveAccount && effectiveAccount.id === acc.id;
+    var isGlobal = globalAccount && globalAccount.id === acc.id;
+    var isLocal = localAccount && localAccount.id === acc.id;
+    var isEffective = isGlobal || isLocal;
     var sshKey = allSshKeys.find(function(k) { return k.accountId === acc.id; });
     var div = document.createElement('div');
-    div.className = 'account-item';
+    div.className = 'account-item' + (isEffective ? ' style="border-color:var(--vscode-focusBorder,rgba(0,120,212,.5));background:rgba(0,120,212,.08)"' : '');
+    var badges = '';
+    if (isGlobal) badges += '<span class="account-badge global">✓ global</span>';
+    if (isLocal) badges += '<span class="account-badge local">✓ local</span>';
     div.innerHTML = 
       '<div class="account-info">' +
         '<div class="account-name">' + esc(acc.username) + 
-          '<span class="account-badge ' + (acc.isGlobal ? 'global' : 'local') + '">' + esc(acc.provider) + '</span>' +
-          (isEffective ? '<span class="account-badge global">active</span>' : '') +
+          '<span class="account-badge" style="background:rgba(128,128,128,.2)">' + esc(acc.provider) + '</span>' +
+          badges +
         '</div>' +
         '<div class="account-meta">' + 
           (acc.token ? '✓ Token' : '✗ No token') + ' | ' +
@@ -237,6 +240,8 @@ function renderAccounts() {
       '<div class="account-actions">' +
         '<button class="btn-action btn-sm" data-action="ssh" data-id="' + esc(acc.id) + '">SSH</button>' +
         '<button class="btn-action btn-sm" data-action="token" data-id="' + esc(acc.id) + '">Token</button>' +
+        (isGlobal ? '<button class="btn-action btn-sm" data-action="unsetGlobal" data-id="' + esc(acc.id) + '" title="Unset global">✗ Global</button>' : '<button class="btn-action btn-sm" data-action="setGlobal" data-id="' + esc(acc.id) + '" title="Set as global">⬤ Global</button>') +
+        (isLocal ? '<button class="btn-action btn-sm" data-action="unsetLocal" data-id="' + esc(acc.id) + '" title="Unset local">✗ Local</button>' : '<button class="btn-action btn-sm" data-action="setLocal" data-id="' + esc(acc.id) + '" title="Set for this workspace">⬤ Local</button>') +
         '<button class="btn-action btn-sm" data-action="delete" data-id="' + esc(acc.id) + '">×</button>' +
       '</div>';
     accountList.appendChild(div);
@@ -251,6 +256,7 @@ function updateUI(msg) {
   globalAccount = msg.globalAccount || null;
   localAccount = msg.localAccount || null;
   allSshKeys = msg.sshKeys || [];
+  window.activeRepo = msg.activeRepo || '';
 
   activeWorkspace.textContent = msg.activeRepo || '—';
 
@@ -263,17 +269,13 @@ window.addEventListener('message', function(e) {
   if (msg.type === 'state') {
     updateUI(msg);
   } else if (msg.type === 'projectAdded') {
-    allProjects.push(msg.project);
-    renderProjects();
+    vscode.postMessage({ type: 'refresh' });
   } else if (msg.type === 'projectRemoved') {
-    allProjects = allProjects.filter(function(p) { return p.id !== msg.id; });
-    renderProjects();
+    vscode.postMessage({ type: 'refresh' });
   } else if (msg.type === 'accountAdded') {
-    allAccounts.push(msg.account);
-    renderAccounts();
+    vscode.postMessage({ type: 'getAccounts' });
   } else if (msg.type === 'accountRemoved') {
-    allAccounts = allAccounts.filter(function(a) { return a.id !== msg.accountId; });
-    renderAccounts();
+    vscode.postMessage({ type: 'getAccounts' });
   } else if (msg.type === 'accountUpdated') {
     vscode.postMessage({ type: 'getAccounts' });
   } else if (msg.type === 'sshKeyGenerated') {
@@ -283,6 +285,10 @@ window.addEventListener('message', function(e) {
 
 document.getElementById('btn-add').addEventListener('click', function() {
   vscode.postMessage({ type: 'addProject' });
+});
+
+document.getElementById('btn-add-project').addEventListener('click', function() {
+  vscode.postMessage({ type: 'addCurrentProject' });
 });
 
 document.getElementById('btn-refresh').addEventListener('click', function() {
@@ -329,6 +335,14 @@ accountList.addEventListener('click', function(e) {
     vscode.postMessage({ type: 'generateSshKey', accountId: id });
   } else if (action === 'token') {
     vscode.postMessage({ type: 'addToken', accountId: id });
+  } else if (action === 'setGlobal') {
+    vscode.postMessage({ type: 'setGlobalAccount', accountId: id });
+  } else if (action === 'unsetGlobal') {
+    vscode.postMessage({ type: 'setGlobalAccount', accountId: null });
+  } else if (action === 'setLocal') {
+    vscode.postMessage({ type: 'setLocalAccount', workspaceUri: window.activeRepo, accountId: id });
+  } else if (action === 'unsetLocal') {
+    vscode.postMessage({ type: 'setLocalAccount', workspaceUri: window.activeRepo, accountId: null });
   } else if (action === 'delete') {
     vscode.postMessage({ type: 'removeAccount', accountId: id });
   }

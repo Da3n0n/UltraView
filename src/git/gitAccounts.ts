@@ -32,6 +32,17 @@ export class GitAccounts {
 
   addAccount(account: Partial<GitAccount>): GitAccount {
     const accounts = this.listAccounts();
+    
+    const existingIdx = accounts.findIndex(a => 
+      a.provider === (account.provider || 'github') && 
+      a.username.toLowerCase() === (account.username || '').toLowerCase()
+    );
+    if (existingIdx >= 0) {
+      accounts[existingIdx] = { ...accounts[existingIdx], ...account };
+      this.saveAccounts(accounts);
+      return accounts[existingIdx];
+    }
+    
     const acc: GitAccount = {
       id: account.id || simpleUuid(),
       provider: account.provider || 'github',
