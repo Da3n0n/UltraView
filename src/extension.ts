@@ -8,13 +8,22 @@ import { IndexProvider } from './providers/indexProvider';
 import { CodeGraphProvider } from './providers/codeGraphProvider';
 import { GitProvider } from './providers/gitProvider';
 import { CustomComments } from './customComments/index';
+import { SharedStore } from './sync/sharedStore';
 
 
 let customComments: CustomComments;
+let sharedStore: SharedStore;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   customComments = new CustomComments(context);
-  
+
+  // ── Shared cross-IDE store ─────────────────────────────────────────────
+  sharedStore = new SharedStore(context);
+  await sharedStore.initialize();
+  context.subscriptions.push({ dispose: () => sharedStore.dispose() });
+
+  const gitProvider = new GitProvider(context, sharedStore);
+
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       'ultraview.sqlite',
@@ -53,14 +62,14 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.window.registerWebviewViewProvider(
       GitProvider.viewId,
-      new GitProvider(context),
+      gitProvider,
       { webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
       CodeGraphProvider.openAsPanel(context);
     }),
     vscode.commands.registerCommand('ultraview.openGitProjects', () => {
-      GitProvider.openAsPanel(context);
+      GitProvider.openAsPanel(context, sharedStore);
     }),
     vscode.commands.registerCommand('ultraview.openUrl', async (url?: string) => {
       if (url && typeof url === 'string') {
@@ -104,8 +113,19 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('ultraview.refreshCustomComments', () => {
       customComments.updateCss();
-    })
+    }),
+
+    // ── Sync folder management ──────────────────────────────────────────
+    vscode.commands.registerCommand('ultraview.setSyncFolder', async () => {
+      await sharedStore.changeSyncDirectory();
+    }),
+    vscode.commands.registerCommand('ultraview.showSyncFolder', () => {
+      vscode.env.openExternal(vscode.Uri.file(sharedStore.syncDirPath));
+      vscode.window.showInformationMessage(
+        `Ultraview sync file: ${sharedStore.syncFilePath}`
+      );
+    }),
   );
 }
 
-export function deactivate() {}
+export function deactivate() { }

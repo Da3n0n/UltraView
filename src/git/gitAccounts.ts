@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import { GitAccount, GitProvider, SshKey } from './types';
+import { SharedStore, SyncAccount, SyncSshKey } from '../sync/sharedStore';
 
 function simpleUuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -10,39 +11,74 @@ function simpleUuid(): string {
   });
 }
 
-const KEY_ACCOUNTS = 'ultraview.git.accounts.v1';
-const KEY_SSH_KEYS = 'ultraview.git.sshKeys.v1';
-const KEY_GLOBAL_ACCOUNT = 'ultraview.git.globalAccount';
-const KEY_LOCAL_ACCOUNTS = 'ultraview.git.localAccounts';
+// ── Converters ────────────────────────────────────────────────────────────────
+// Tokens are stored ONLY in context.secrets, keyed by account ID.
+// The SyncAccount written to disk never includes the raw token.
+
+function toGitAccount(sync: SyncAccount, token?: string): GitAccount {
+  return {
+    id: sync.id,
+    provider: sync.provider as GitProvider,
+    username: sync.username,
+    email: sync.email,
+    token,
+    sshKeyId: sync.sshKeyId,
+    tokenExpiresAt: sync.tokenExpiresAt,
+    isGlobal: sync.isGlobal,
+    createdAt: sync.createdAt,
+  };
+}
+
+function toSyncAccount(account: GitAccount): SyncAccount {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { token: _token, ...safe } = account;
+  return safe as SyncAccount;
+}
+
+function toSshKey(sync: SyncSshKey): SshKey {
+  return sync as SshKey;
+}
+
+// ── GitAccounts ───────────────────────────────────────────────────────────────
 
 export class GitAccounts {
-  private context: vscode.ExtensionContext;
+  constructor(
+    private context: vscode.ExtensionContext,
+    private store: SharedStore
+  ) { }
 
-  constructor(context: vscode.ExtensionContext) {
-    this.context = context;
-  }
+  // ── Accounts ────────────────────────────────────────────────────────────
 
   listAccounts(): GitAccount[] {
-    return this.context.globalState.get<GitAccount[]>(KEY_ACCOUNTS, []);
+    const data = this.store.read();
+    // We return accounts without tokens in bulk; callers that need tokens fetch them individually.
+    return data.accounts.map(a => toGitAccount(a));
   }
 
   saveAccounts(list: GitAccount[]) {
-    this.context.globalState.update(KEY_ACCOUNTS, list);
+    this.store.write({ accounts: list.map(toSyncAccount) });
   }
 
   addAccount(account: Partial<GitAccount>): GitAccount {
-    const accounts = this.listAccounts();
-    
-    const existingIdx = accounts.findIndex(a => 
-      a.provider === (account.provider || 'github') && 
+    const data = this.store.read();
+    const accounts = data.accounts;
+
+    const existingIdx = accounts.findIndex(a =>
+      a.provider === (account.provider || 'github') &&
       a.username.toLowerCase() === (account.username || '').toLowerCase()
     );
+
     if (existingIdx >= 0) {
-      accounts[existingIdx] = { ...accounts[existingIdx], ...account };
-      this.saveAccounts(accounts);
-      return accounts[existingIdx];
+      const merged: SyncAccount = { ...accounts[existingIdx], ...toSyncAccount(account as GitAccount) };
+      accounts[existingIdx] = merged;
+      this.store.write({ accounts });
+      // Persist token if provided
+      if (account.token) {
+        this.context.secrets.store(`ultraview.git.token.${merged.id}`, account.token);
+      }
+      return toGitAccount(merged, account.token);
     }
-    
+
     const acc: GitAccount = {
       id: account.id || simpleUuid(),
       provider: account.provider || 'github',
@@ -52,72 +88,87 @@ export class GitAccounts {
       sshKeyId: account.sshKeyId,
       tokenExpiresAt: account.tokenExpiresAt,
       isGlobal: account.isGlobal ?? false,
-      createdAt: account.createdAt || Date.now()
+      createdAt: account.createdAt || Date.now(),
     };
-    accounts.push(acc);
-    this.saveAccounts(accounts);
+    accounts.push(toSyncAccount(acc));
+    this.store.write({ accounts });
+
+    // Persist token separately
+    if (acc.token) {
+      this.context.secrets.store(`ultraview.git.token.${acc.id}`, acc.token);
+    }
     return acc;
   }
 
   updateAccount(id: string, patch: Partial<GitAccount>) {
-    const accounts = this.listAccounts();
+    const data = this.store.read();
+    const accounts = data.accounts;
     const idx = accounts.findIndex(a => a.id === id);
     if (idx >= 0) {
-      accounts[idx] = { ...accounts[idx], ...patch };
-      this.saveAccounts(accounts);
+      const { token, ...safePatch } = patch;
+      accounts[idx] = { ...accounts[idx], ...safePatch };
+      this.store.write({ accounts });
+      if (token !== undefined) {
+        this.context.secrets.store(`ultraview.git.token.${id}`, token);
+      }
     }
   }
 
   removeAccount(id: string) {
-    const accounts = this.listAccounts().filter(a => a.id !== id);
-    this.saveAccounts(accounts);
-    const local = this.getLocalAccounts();
-    const filtered = local.filter(l => l.accountId !== id);
-    this.context.globalState.update(KEY_LOCAL_ACCOUNTS, filtered);
+    const data = this.store.read();
+    const accounts = data.accounts.filter(a => a.id !== id);
+    const localAccounts = data.localAccounts.filter(l => l.accountId !== id);
+    this.store.write({ accounts, localAccounts });
+    this.context.secrets.delete(`ultraview.git.token.${id}`);
   }
 
   getAccount(id: string): GitAccount | undefined {
-    return this.listAccounts().find(a => a.id === id);
+    const data = this.store.read();
+    const sync = data.accounts.find(a => a.id === id);
+    if (!sync) return undefined;
+    return toGitAccount(sync);
   }
 
+  async getAccountWithToken(id: string): Promise<GitAccount | undefined> {
+    const data = this.store.read();
+    const sync = data.accounts.find(a => a.id === id);
+    if (!sync) return undefined;
+    const token = await this.context.secrets.get(`ultraview.git.token.${id}`);
+    return toGitAccount(sync, token);
+  }
+
+  // ── Global / Local account selection ────────────────────────────────────
+
   getGlobalAccount(): GitAccount | undefined {
-    const id = this.context.globalState.get<string | undefined>(KEY_GLOBAL_ACCOUNT);
+    const id = this.store.read().globalAccountId;
     if (!id) return undefined;
     return this.getAccount(id);
   }
 
   setGlobalAccount(accountId: string | undefined) {
-    if (accountId) {
-      this.context.globalState.update(KEY_GLOBAL_ACCOUNT, accountId);
-    } else {
-      this.context.globalState.update(KEY_GLOBAL_ACCOUNT, undefined);
-    }
+    this.store.write({ globalAccountId: accountId });
   }
 
   setLocalAccount(workspaceUri: string, accountId: string | undefined) {
-    const local = this.getLocalAccounts();
+    const data = this.store.read();
+    const local = [...data.localAccounts];
     const existing = local.findIndex(l => l.workspaceUri === workspaceUri);
     if (accountId) {
       if (existing >= 0) {
-        local[existing].accountId = accountId;
+        local[existing] = { workspaceUri, accountId };
       } else {
         local.push({ workspaceUri, accountId });
       }
     } else if (existing >= 0) {
       local.splice(existing, 1);
     }
-    this.context.globalState.update(KEY_LOCAL_ACCOUNTS, local);
+    this.store.write({ localAccounts: local });
   }
 
   getLocalAccount(workspaceUri: string): GitAccount | undefined {
-    const local = this.getLocalAccounts();
-    const entry = local.find(l => l.workspaceUri === workspaceUri);
+    const entry = this.store.read().localAccounts.find(l => l.workspaceUri === workspaceUri);
     if (!entry) return undefined;
     return this.getAccount(entry.accountId);
-  }
-
-  private getLocalAccounts(): { workspaceUri: string; accountId: string }[] {
-    return this.context.globalState.get<{ workspaceUri: string; accountId: string }[]>(KEY_LOCAL_ACCOUNTS, []);
   }
 
   getEffectiveAccount(workspaceUri?: string): GitAccount | undefined {
@@ -125,16 +176,18 @@ export class GitAccounts {
     return local || this.getGlobalAccount();
   }
 
+  // ── SSH Keys ─────────────────────────────────────────────────────────────
+
   listSshKeys(): SshKey[] {
-    return this.context.globalState.get<SshKey[]>(KEY_SSH_KEYS, []);
+    return this.store.read().sshKeys.map(toSshKey);
   }
 
   saveSshKeys(list: SshKey[]) {
-    this.context.globalState.update(KEY_SSH_KEYS, list);
+    this.store.write({ sshKeys: list });
   }
 
   addSshKey(key: Partial<SshKey>): SshKey {
-    const keys = this.listSshKeys();
+    const keys = this.store.read().sshKeys;
     const sshKey: SshKey = {
       id: key.id || simpleUuid(),
       name: key.name || 'SSH Key',
@@ -142,26 +195,26 @@ export class GitAccounts {
       privateKeyPath: key.privateKeyPath,
       provider: key.provider || 'github',
       accountId: key.accountId || '',
-      createdAt: key.createdAt || Date.now()
+      createdAt: key.createdAt || Date.now(),
     };
     keys.push(sshKey);
-    this.saveSshKeys(keys);
+    this.store.write({ sshKeys: keys });
     return sshKey;
   }
 
   removeSshKey(id: string) {
-    const keys = this.listSshKeys().filter(k => k.id !== id);
-    this.saveSshKeys(keys);
+    const keys = this.store.read().sshKeys.filter(k => k.id !== id);
+    this.store.write({ sshKeys: keys });
   }
 
   getSshKey(id: string): SshKey | undefined {
-    return this.listSshKeys().find(k => k.id === id);
+    return this.store.read().sshKeys.find(k => k.id === id) as SshKey | undefined;
   }
 
   async generateSshKey(accountId: string, provider: GitProvider, keyName?: string): Promise<SshKey> {
     const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519', {
       publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
     });
 
     const key = this.addSshKey({
@@ -169,11 +222,10 @@ export class GitAccounts {
       publicKey: publicKey.replace(/-----BEGIN PUBLIC KEY-----/, '').replace(/-----END PUBLIC KEY-----/, '').trim(),
       provider,
       accountId,
-      privateKeyPath: `ultraview-ssh-${Date.now()}.pem`
+      privateKeyPath: `ultraview-ssh-${Date.now()}.pem`,
     });
 
     await this.context.secrets.store(`ultraview.git.sshkey.${key.id}`, privateKey);
-
     return key;
   }
 
@@ -190,17 +242,17 @@ export class GitAccounts {
       case 'github':
         return {
           sshKeyUrl: 'https://github.com/settings/ssh/new',
-          tokenUrl: 'https://github.com/settings/tokens/new'
+          tokenUrl: 'https://github.com/settings/tokens/new',
         };
       case 'gitlab':
         return {
           sshKeyUrl: 'https://gitlab.com/-/profile/keys',
-          tokenUrl: 'https://gitlab.com/-/profile/personal_access_tokens'
+          tokenUrl: 'https://gitlab.com/-/profile/personal_access_tokens',
         };
       case 'azure':
         return {
           sshKeyUrl: 'https://dev.azure.com/{user}/_settings/ssh',
-          tokenUrl: 'https://dev.azure.com/_usersSettings/tokens'
+          tokenUrl: 'https://dev.azure.com/_usersSettings/tokens',
         };
       default:
         return { sshKeyUrl: '', tokenUrl: '' };
