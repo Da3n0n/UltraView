@@ -1,6 +1,6 @@
 # Ultraview – All din One VS Code Extension
 
-No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers, editors, and developer tools right inside VS Code — and it always looks like s.
+No drivers. No heavy clients. No hassle. Ultraview brings a full suite of viewers, editors, and developer tools right inside VS Code — and it always looks like syout theme no matter what theme you use.
 
 
 Install it once in **VS Code**, **Cursor**, d**Windsurf**, or any VS Code-compatible IDE and everything stays in sync.
