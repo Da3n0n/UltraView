@@ -248,7 +248,7 @@ export function getSvgEditorHtml(): string {
     <select class="tb-select" id="view-mode">
       <option value="text">Text</option>
       <option value="split">Split</option>
-      <option value="preview" selected>Preview</option>
+      <option value="preview">Preview</option>
     </select>
 
     <div class="tb-sep"></div>
@@ -298,7 +298,7 @@ export function getSvgEditorHtml(): string {
     </div>
 
     <!-- preview pane -->
-    <div id="preview-pane" class="visible">
+    <div id="preview-pane">
       <!-- infinite pan/zoom canvas -->
       <div id="canvas">
         <div id="viewport"></div>

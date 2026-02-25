@@ -317,14 +317,14 @@ function renderPreview(preserveView) {
     .replace(/^<\\?xml[^>]*\\?>\\s*/im,'')
     .replace(/^<!DOCTYPE[^>]*>\\s*/im,'');
 
-  if (!/^<svg[\\s>/]/i.test(stripped)) {
-    showError('Not a valid SVG file (<svg> root not found).');
+  if (!/^<svg/i.test(stripped)) {
+    showError('Bad SVG. src[0..50]=' + JSON.stringify(src.substring(0,50)) + ' stripped[0..50]=' + JSON.stringify(stripped.substring(0,50)));
     return;
   }
   hideError();
 
   try {
-    // DOMParser is available in VS Code webviews
+    // Use DOMParser to validate and extract metadata only
     const parser = new DOMParser();
     const doc = parser.parseFromString(src, 'image/svg+xml');
     const parseErr = doc.querySelector('parsererror');
@@ -334,37 +334,54 @@ function renderPreview(preserveView) {
     }
     hideError();
 
-    const svgEl = doc.documentElement;
+    const svgMeta = doc.documentElement;
 
-    // Make SVG not fight our transform: remove hard px width/height
-    // but keep viewBox so it can scale properly
-    const vb = svgEl.getAttribute('viewBox');
+    // Extract dimensions for stats and fitToCanvas
+    const vb = svgMeta.getAttribute('viewBox');
+    let svgW = null, svgH = null;
     if (vb) {
       const parts = vb.trim().split(/[\\s,]+/);
       if (parts.length === 4) {
-        const nw = parseFloat(parts[2]), nh = parseFloat(parts[3]);
-        if (!isNaN(nw) && !isNaN(nh)) {
-          svgEl.setAttribute('width',  nw);
-          svgEl.setAttribute('height', nh);
-          statDims.textContent = nw + ' × ' + nh + ' px';
-        }
+        svgW = parseFloat(parts[2]);
+        svgH = parseFloat(parts[3]);
+        if (!isNaN(svgW) && !isNaN(svgH)) {
+          statDims.textContent = svgW + ' × ' + svgH + ' px';
+        } else { svgW = null; svgH = null; }
       }
-    } else {
-      const wa = parseFloat(svgEl.getAttribute('width'));
-      const ha = parseFloat(svgEl.getAttribute('height'));
+    }
+    if (svgW === null) {
+      const wa = parseFloat(svgMeta.getAttribute('width'));
+      const ha = parseFloat(svgMeta.getAttribute('height'));
       if (!isNaN(wa) && !isNaN(ha)) {
+        svgW = wa; svgH = ha;
         statDims.textContent = wa + ' × ' + ha + ' px';
       } else {
         statDims.textContent = '';
       }
     }
 
-    // Remove fill=none that makes the entire SVG transparent to clicks
-    // We'll handle hit testing ourselves
+    // Inject SVG via innerHTML for reliable rendering in webview
+    // Patch src to include explicit width/height from viewBox so transform works
+    let renderSrc = src;
+    if (vb && svgW !== null && svgH !== null) {
+      // Ensure the <svg> tag has width and height attributes matching viewBox
+      renderSrc = renderSrc.replace(
+        /(<svg[^>]*?)\\s+width="[^"]*"/i, '$1'
+      ).replace(
+        /(<svg[^>]*?)\\s+height="[^"]*"/i, '$1'
+      ).replace(
+        /(<svg)([\\s>])/i,
+        '$1 width="' + svgW + '" height="' + svgH + '"$2'
+      );
+    }
 
-    viewport.innerHTML = '';
-    viewport.appendChild(doc.documentElement.cloneNode ? doc.documentElement : svgEl);
+    viewport.innerHTML = renderSrc;
     currentSvgEl = viewport.querySelector('svg');
+
+    if (!currentSvgEl) {
+      showError('SVG element not found after render.');
+      return;
+    }
 
     // Re-attach click handler for selection
     attachSelectionHandlers();
@@ -557,9 +574,11 @@ window.addEventListener('keydown', e => {
 
 // Checkerboard toggle
 let checkerOn = true;
-document.getElementById('btn-checker').addEventListener('click', () => {
+const btnChecker = document.getElementById('btn-checker');
+btnChecker.addEventListener('click', () => {
   checkerOn = !checkerOn;
   canvas.classList.toggle('no-checker', !checkerOn);
+  btnChecker.classList.toggle('active', !checkerOn);
 });
 
 // Inspector close
@@ -643,6 +662,7 @@ window.addEventListener('message', e => {
   const msg = e.data;
   if (msg.type === 'setContent') {
     codeTA.value = msg.content;
+    showError('DBG setContent received, len=' + msg.content.length + ' first50=' + JSON.stringify(msg.content.substring(0,50)));
     syncHighlight();
     // Seed the undo stack with the initial content
     lastSnapshot = msg.content;
