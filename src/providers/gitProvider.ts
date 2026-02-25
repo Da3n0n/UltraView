@@ -184,6 +184,20 @@ export class GitProvider implements vscode.WebviewViewProvider {
           this.postState();
           break;
         }
+        case 'applyCredentials': {
+          const accountId = msg.accountId;
+          const workspaceUri = msg.workspaceUri || (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '');
+          const acc = this.accounts.getAccount(accountId);
+          if (acc && workspaceUri) {
+            await applyLocalAccount(workspaceUri, acc, acc.token);
+            vscode.window.showInformationMessage(
+              `✓ Git credentials applied for ${acc.username} in this workspace. Reload the Source Control panel.`
+            );
+          } else {
+            vscode.window.showWarningMessage('No account or workspace found to apply credentials to.');
+          }
+          break;
+        }
         case 'addToken': {
           const accountId = msg.accountId;
           const account = this.accounts.getAccount(accountId);
