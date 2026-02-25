@@ -8,15 +8,15 @@ export function getSvgEditorStyles(): string {
   --border:      var(--vscode-panel-border, var(--vscode-widget-border, rgba(128,128,128,0.35)));
   --text:        var(--vscode-editor-foreground);
   --muted:       var(--vscode-descriptionForeground);
-  --accent:      var(--vscode-textLink-foreground, #4fc3f7);
-  --accent-bg:   rgba(79,195,247,0.12);
+  --accent:      var(--vscode-focusBorder, var(--vscode-textLink-foreground, #4fc3f7));
+  --accent-bg:   var(--vscode-list-activeSelectionBackground, rgba(79,195,247,0.12));
   --toolbar-bg:  var(--vscode-sideBar-background, var(--vscode-editor-background));
   --input-bg:    var(--vscode-input-background, rgba(0,0,0,0.2));
   --input-border:var(--vscode-input-border, rgba(128,128,128,0.4));
   --sel-border:  #4fc3f7;
   --sel-fill:    rgba(79,195,247,0.08);
   --radius: 5px;
-  /* ── Syntax token colours ── */
+  /* Syntax token colours */
   --tok-tag:     #4ec9b0;
   --tok-attr:    #9cdcfe;
   --tok-val:     #ce9178;
@@ -30,10 +30,10 @@ export function getSvgEditorStyles(): string {
 html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px; }
 
-/* ── App shell ── */
+/* App shell */
 #app { display: flex; flex-direction: column; height: 100vh; }
 
-/* ── Toolbar ── */
+/* Toolbar */
 .toolbar {
   flex-shrink: 0; display: flex; align-items: center; gap: 3px;
   padding: 5px 10px; background: var(--toolbar-bg);
@@ -62,10 +62,10 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   color: var(--muted); flex-shrink: 0;
 }
 
-/* ── Main split area ── */
+/* Main split area */
 .editor-wrap { flex: 1; display: flex; overflow: hidden; min-height: 0; }
 
-/* ── Code pane ── */
+/* Code pane */
 #edit-pane {
   flex: 1 1 45%; display: none; flex-direction: column;
   overflow: hidden; min-width: 0;
@@ -78,7 +78,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   flex: 1; position: relative; overflow: hidden;
 }
 
-/* shared metrics – must match exactly between pre and textarea */
+/* shared metrics - must match exactly between pre and textarea */
 .code-wrap pre,
 .code-wrap textarea {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -109,7 +109,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 
 #svg-code {
   background: transparent;
-  /* hide text — the highlight layer renders it */
+  /* hide text - the highlight layer renders it */
   color: transparent;
   -webkit-text-fill-color: transparent;
   caret-color: var(--text); /* but keep caret visible */
@@ -120,7 +120,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #svg-code::selection { background: rgba(79,195,247,0.25); }
 #svg-code:focus { outline: none; }
 
-/* ── Preview pane ── */
+/* Preview pane */
 #preview-pane {
   flex: 1 1 55%; display: none; flex-direction: column;
   overflow: hidden; min-width: 0; position: relative;
@@ -131,23 +131,11 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 #canvas {
   flex: 1; position: relative; overflow: hidden;
   cursor: grab;
-  /* checkerboard by default */
-  background-color: var(--surface);
-  background-image:
-    linear-gradient(45deg,rgba(128,128,128,0.07) 25%,transparent 25%),
-    linear-gradient(-45deg,rgba(128,128,128,0.07) 25%,transparent 25%),
-    linear-gradient(45deg,transparent 75%,rgba(128,128,128,0.07) 75%),
-    linear-gradient(-45deg,transparent 75%,rgba(128,128,128,0.07) 75%);
-  background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
 #canvas.grabbing { cursor: grabbing; }
-#canvas.no-checker {
-  background-image: none;
-  background-color: var(--surface);
-}
 
-/* The transform wrapper — zoom & pan live here */
+/* The transform wrapper - zoom and pan live here */
 #viewport {
   position: absolute;
   top: 0; left: 0;
@@ -168,7 +156,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   display: none;
 }
 
-/* ── Inspector panel (floating, anchored bottom-right of canvas) ── */
+/* Inspector panel (floating, anchored bottom-right of canvas) */
 #inspector {
   position: absolute; bottom: 10px; right: 10px;
   width: 240px; max-height: 300px;
@@ -215,7 +203,7 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
   color: var(--accent); border-radius: 3px; padding: 1px 5px;
 }
 
-/* ── Error bar ── */
+/* Error bar */
 #error-bar {
   display: none; align-items: center; gap: 8px; flex-shrink: 0;
   padding: 4px 12px; background: rgba(200,50,50,0.12);
@@ -223,14 +211,14 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(-
 }
 #error-bar.open { display: flex; }
 
-/* ── Status bar ── */
+/* Status bar */
 .status-bar {
   flex-shrink: 0; display: flex; align-items: center; gap: 14px;
   padding: 3px 12px; background: var(--toolbar-bg);
   border-top: 1px solid var(--border); font-size: 11px; color: var(--muted);
 }
 
-/* ── Scrollbars ── */
+/* Scrollbars */
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -242,7 +230,7 @@ export function getSvgEditorHtml(): string {
     return /* html */`
 <div id="app">
 
-  <!-- ── Toolbar ── -->
+  <!-- Toolbar -->
   <div class="toolbar">
     <span class="tb-label">View</span>
     <select class="tb-select" id="view-mode">
@@ -275,18 +263,10 @@ export function getSvgEditorHtml(): string {
       </svg>
     </button>
 
-    <div class="tb-sep"></div>
-
-    <button class="tb-btn" id="btn-checker" title="Toggle checkerboard">
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
-        <rect x="0" y="0" width="8" height="8" opacity=".45"/><rect x="8" y="8" width="8" height="8" opacity=".45"/>
-      </svg>BG
-    </button>
-
     <span style="margin-left:auto;color:var(--muted)" id="stat-dims"></span>
   </div>
 
-  <!-- ── Editor wrap ── -->
+  <!-- Editor wrap -->
   <div class="editor-wrap" id="editor-wrap">
 
     <!-- code pane -->
@@ -309,7 +289,7 @@ export function getSvgEditorHtml(): string {
       <div id="inspector">
         <div id="inspector-title">
           <span id="inspector-tag"><span class="tag-badge">svg</span></span>
-          <button id="inspector-close" title="Close">×</button>
+          <button id="inspector-close" title="Close">&#215;</button>
         </div>
         <div id="inspector-body"></div>
       </div>
@@ -317,7 +297,7 @@ export function getSvgEditorHtml(): string {
 
   </div>
 
-  <div id="error-bar">⚠ <span id="error-msg"></span></div>
+  <div id="error-bar">&#9888; <span id="error-msg"></span></div>
 
   <div class="status-bar">
     <span id="stat-lines">Lines: 0</span>
