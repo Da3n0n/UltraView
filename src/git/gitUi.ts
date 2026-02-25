@@ -238,6 +238,7 @@ function renderAccounts() {
         '</div>' +
       '</div>' +
       '<div class="account-actions">' +
+        '<button class="btn-action btn-sm" data-action="apply" data-id="' + esc(acc.id) + '" title="Apply git credentials to workspace now">⚡ Apply</button>' +
         '<button class="btn-action btn-sm" data-action="ssh" data-id="' + esc(acc.id) + '">SSH</button>' +
         '<button class="btn-action btn-sm" data-action="token" data-id="' + esc(acc.id) + '">Token</button>' +
         (isGlobal ? '<button class="btn-action btn-sm" data-action="unsetGlobal" data-id="' + esc(acc.id) + '" title="Unset global">✗ Global</button>' : '<button class="btn-action btn-sm" data-action="setGlobal" data-id="' + esc(acc.id) + '" title="Set as global">⬤ Global</button>') +
@@ -331,7 +332,9 @@ accountList.addEventListener('click', function(e) {
   var action = btn.dataset.action;
   var id = btn.dataset.id;
   
-  if (action === 'ssh') {
+  if (action === 'apply') {
+    vscode.postMessage({ type: 'applyCredentials', accountId: id, workspaceUri: window.activeRepo });
+  } else if (action === 'ssh') {
     vscode.postMessage({ type: 'generateSshKey', accountId: id });
   } else if (action === 'token') {
     vscode.postMessage({ type: 'addToken', accountId: id });

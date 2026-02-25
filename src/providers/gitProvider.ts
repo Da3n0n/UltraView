@@ -3,6 +3,7 @@ import { buildGitHtml } from '../git/gitUi';
 import { GitProjects } from '../git/gitProjects';
 import { GitAccounts } from '../git/gitAccounts';
 import { GitProfile, GitProvider as GitProviderType } from '../git/types';
+import { applyLocalAccount, applyGlobalAccount, clearLocalAccount } from '../git/gitCredentials';
 
 export class GitProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'ultraview.git';
@@ -157,6 +158,13 @@ export class GitProvider implements vscode.WebviewViewProvider {
         case 'setGlobalAccount': {
           const accountId = msg.accountId || undefined;
           this.accounts.setGlobalAccount(accountId);
+          // Apply git identity globally
+          if (accountId) {
+            const acc = this.accounts.getAccount(accountId);
+            if (acc) {
+              await applyGlobalAccount(acc);
+            }
+          }
           this.postState();
           break;
         }
@@ -164,6 +172,15 @@ export class GitProvider implements vscode.WebviewViewProvider {
           const workspaceUri = msg.workspaceUri;
           const accountId = msg.accountId || undefined;
           this.accounts.setLocalAccount(workspaceUri, accountId);
+          // Apply or clear git credentials in the local repo
+          if (accountId && workspaceUri) {
+            const acc = this.accounts.getAccount(accountId);
+            if (acc) {
+              await applyLocalAccount(workspaceUri, acc, acc.token);
+            }
+          } else if (workspaceUri) {
+            await clearLocalAccount(workspaceUri);
+          }
           this.postState();
           break;
         }
@@ -262,8 +279,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
     const activeRepo = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length ? vscode.workspace.workspaceFolders[0].uri.fsPath : '';
     if (account.isGlobal) {
       this.accounts.setGlobalAccount(account.id);
+      await applyGlobalAccount(account);
     } else if (activeRepo) {
       this.accounts.setLocalAccount(activeRepo, account.id);
+      await applyLocalAccount(activeRepo, account, account.token);
     }
 
     if (authMethod.label === 'ssh') {
@@ -331,8 +350,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
       const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
       if (account.isGlobal) {
         this.accounts.setGlobalAccount(account.id);
+        await applyGlobalAccount(account);
       } else if (activeRepo) {
         this.accounts.setLocalAccount(activeRepo, account.id);
+        await applyLocalAccount(activeRepo, account, token);
       }
 
       vscode.window.showInformationMessage(`Signed in as ${username} via ${gitProvider}!`);
@@ -350,7 +371,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
   static openAsPanel(context: vscode.ExtensionContext) {
     const panel = vscode.window.createWebviewPanel('ultraview.git.panel', 'Git Projects', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true });
     panel.webview.html = buildGitHtml();
-    
+
     const manager = new GitProjects(context);
     const accounts = new GitAccounts(context);
     panel.webview.onDidReceiveMessage(async msg => {
@@ -471,7 +492,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
               microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default']
             };
             try {
-      const session = await vscode.authentication.getSession(vsCodeProviderId, scopes[vsCodeProviderId] || [], { forceNewSession: true });
+              const session = await vscode.authentication.getSession(vsCodeProviderId, scopes[vsCodeProviderId] || [], { forceNewSession: true });
               const username = session.account.label;
               const token = session.accessToken;
               let email: string | undefined;
@@ -622,10 +643,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
   private async _createProfile(): Promise<void> {
     const name = await vscode.window.showInputBox({ prompt: 'Profile name' });
     if (!name) return;
-    
+
     const userName = await vscode.window.showInputBox({ prompt: 'Git user name (optional)' });
     const userEmail = await vscode.window.showInputBox({ prompt: 'Git user email (optional)' });
-    
+
     const profile = this.manager.addProfile({ name, userName: userName || undefined, userEmail: userEmail || undefined });
     this.postState();
     this.view?.webview.postMessage({ type: 'profileAdded', profile });
@@ -634,10 +655,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
   private async _editProfile(profile: GitProfile): Promise<void> {
     const name = await vscode.window.showInputBox({ prompt: 'Profile name', value: profile.name });
     if (name === undefined) return;
-    
+
     const userName = await vscode.window.showInputBox({ prompt: 'Git user name (optional)', value: profile.userName || '' });
     const userEmail = await vscode.window.showInputBox({ prompt: 'Git user email (optional)', value: profile.userEmail || '' });
-    
+
     const profiles = this.manager.listProfiles();
     const idx = profiles.findIndex(p => p.id === profile.id);
     if (idx >= 0) {
