@@ -20,31 +20,77 @@ export function getEditorScript(): string {
   const previewRedoStack = [];
   let previewUndoLocked = false;
 
+  // Returns the caret position as a plain character offset within \`root\`.
+  function getCaretOffset(root) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return null;
+    const range = sel.getRangeAt(0);
+    // Clamp the range to inside \`root\`
+    if (!root.contains(range.startContainer)) return null;
+    const pre = document.createRange();
+    pre.setStart(root, 0);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString().length;
+  }
+
+  // Restores the caret to a character offset within \`root\`.
+  function setCaretOffset(root, offset) {
+    if (offset === null || offset === undefined) return;
+    try {
+      const iter = document.createNodeIterator(root, NodeFilter.SHOW_TEXT);
+      let remaining = offset;
+      let node;
+      while ((node = iter.nextNode())) {
+        const len = node.nodeValue.length;
+        if (remaining <= len) {
+          const range = document.createRange();
+          range.setStart(node, remaining);
+          range.collapse(true);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          return;
+        }
+        remaining -= len;
+      }
+      // Offset beyond end – place caret at the very end
+      const range = document.createRange();
+      range.selectNodeContents(root);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) { /* ignore */ }
+  }
+
   function snapshotPreview() {
     if (previewUndoLocked) return;
-    previewUndoStack.push({ html: preview.innerHTML, sel: null });
+    previewUndoStack.push({ html: preview.innerHTML, sel: getCaretOffset(preview) });
     previewRedoStack.length = 0;
     if (previewUndoStack.length > 200) previewUndoStack.shift();
   }
 
   function previewUndo() {
     if (previewUndoStack.length === 0) return;
-    previewRedoStack.push({ html: preview.innerHTML });
+    previewRedoStack.push({ html: preview.innerHTML, sel: getCaretOffset(preview) });
     const snap = previewUndoStack.pop();
     previewUndoLocked = true;
     preview.innerHTML = snap.html;
     previewUndoLocked = false;
+    // Restore caret to where it was when the snapshot was taken
+    setCaretOffset(preview, snap.sel);
     updateRawFromPreview();
     autoSave();
   }
 
   function previewRedo() {
     if (previewRedoStack.length === 0) return;
-    previewUndoStack.push({ html: preview.innerHTML });
+    previewUndoStack.push({ html: preview.innerHTML, sel: getCaretOffset(preview) });
     const snap = previewRedoStack.pop();
     previewUndoLocked = true;
     preview.innerHTML = snap.html;
     previewUndoLocked = false;
+    setCaretOffset(preview, snap.sel);
     updateRawFromPreview();
     autoSave();
   }
