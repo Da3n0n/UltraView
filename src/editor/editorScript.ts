@@ -347,9 +347,22 @@ export function getEditorScript(): string {
         case 'b': e.preventDefault(); actions.bold(); break;
         case 'i': e.preventDefault(); actions.italic(); break;
         case 's': e.preventDefault(); save(); break;
-        // Ctrl+Z / Ctrl+Y are handled natively by the browser for the
-        // textarea because we use execCommand('insertText').
-        // Nothing extra needed here.
+        case 'z':
+          // VS Code's webview intercepts Ctrl+Z before the textarea's native
+          // undo stack can handle it, so we must call execCommand explicitly.
+          e.preventDefault();
+          if (e.shiftKey) {
+            document.execCommand('redo');
+          } else {
+            document.execCommand('undo');
+          }
+          updatePreview();
+          break;
+        case 'y':
+          e.preventDefault();
+          document.execCommand('redo');
+          updatePreview();
+          break;
       }
     }
     if (e.key === 'Tab') {
