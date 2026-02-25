@@ -3,7 +3,7 @@
 Ultraview brings a full suite of viewers, editors, and developer tools right inside VS Code — and it always looks like your theme no matter what theme you use.
 
 
-Install it once in **VS Code**, **Cursor**, d**Windsurf**, or any VS Code-compatible IDE and everything stays in sync.
+Install it once in **VS Code**, **Cursor**, **Windsurf**, or any VS Code-compatible IDE and everything stays in sync.
 
 
 ## Features at a Glance
