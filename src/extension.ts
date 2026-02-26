@@ -10,6 +10,7 @@ import { CodeGraphProvider } from './providers/codeGraphProvider';
 import { GitProvider } from './providers/gitProvider';
 import { CustomComments } from './customComments/index';
 import { SharedStore } from './sync/sharedStore';
+import { Model3dProvider } from './model3dViewer';
 
 
 let customComments: CustomComments;
@@ -59,6 +60,11 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerCustomEditorProvider(
       'ultraview.index',
       new IndexProvider(context),
+      { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
+    ),
+    vscode.window.registerCustomEditorProvider(
+      'ultraview.model3d',
+      new Model3dProvider(context),
       { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }
     ),
     vscode.window.registerWebviewViewProvider(

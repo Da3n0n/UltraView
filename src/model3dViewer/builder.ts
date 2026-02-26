@@ -177,9 +177,12 @@ function getScript(src: string, ext: string): string {
     const needsUsdz  = ext === 'usdz';
     const needsKtx2  = ext === 'ktx2' || ext === 'ktx';
 
+    const needsBlend = ext === 'blend' || ext === 'blend1';
+
     // CDN URLs - use unpkg for all
     const threepipeCdn  = 'https://unpkg.com/threepipe@latest/dist/index.js';
     const extraCdn      = 'https://unpkg.com/@threepipe/plugins-extra-importers@latest/dist/index.js';
+    const blendCdn      = 'https://unpkg.com/@threepipe/plugin-blend-importer@latest/dist/index.js';
 
     const script = `
 (function() {
@@ -254,14 +257,22 @@ function loadThreepipe() {
   document.head.appendChild(s);
 }
 
+
+function loadScript(url, cb) {
+  var s = document.createElement('script');
+  s.src = url;
+  s.onload = cb;
+  s.onerror = cb; // always proceed, plugin may just be unavailable
+  document.head.appendChild(s);
+}
+
 function onThreepipeLoaded() {
   var needsExtra = ${JSON.stringify(needsExtra)};
-  if (needsExtra) {
-    var s2 = document.createElement('script');
-    s2.src = ${JSON.stringify(extraCdn)};
-    s2.onload = function() { initViewer(); };
-    s2.onerror = function() { initViewer(); }; // try anyway without extra importers
-    document.head.appendChild(s2);
+  var needsBlend = ${JSON.stringify(needsBlend)};
+  if (needsBlend) {
+    loadScript(${JSON.stringify(blendCdn)}, function() { initViewer(); });
+  } else if (needsExtra) {
+    loadScript(${JSON.stringify(extraCdn)}, function() { initViewer(); });
   } else {
     initViewer();
   }
@@ -310,8 +321,17 @@ function initViewer() {
       viewer.addPluginsSync(extraPkg.extraImporters);
     }
 
+    // Blend importer (WIP: mesh/geometry only, no materials yet)
+    var blendPkg = window['@threepipe/plugin-blend-importer'];
+    if (blendPkg && blendPkg.BlendLoadPlugin && (MODEL_EXT === 'blend' || MODEL_EXT === 'blend1')) {
+      viewer.addPluginSync(new blendPkg.BlendLoadPlugin());
+    }
+
     // Load the model
-    document.getElementById('loading-text').textContent = 'Loading ' + MODEL_EXT.toUpperCase() + ' model...';
+    var loadingNote = (MODEL_EXT === 'blend' || MODEL_EXT === 'blend1')
+      ? 'Loading .' + MODEL_EXT + ' (geometry only - materials not yet supported)...'
+      : 'Loading ' + MODEL_EXT.toUpperCase() + ' model...';
+    document.getElementById('loading-text').textContent = loadingNote;
 
     viewer.load(MODEL_SRC, { autoCenter: true, autoScale: true })
       .then(function(model) {
