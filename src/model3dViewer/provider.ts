@@ -24,13 +24,31 @@ export class Model3dProvider implements vscode.CustomReadonlyEditorProvider<Mode
         _token: vscode.CancellationToken
     ): Promise<void> {
         const fileUri = document.uri;
-        const folderUri = vscode.Uri.file(path.dirname(fileUri.fsPath));
+        const fileFolderUri = vscode.Uri.file(path.dirname(fileUri.fsPath));
 
-        // Grant the webview access to the file's folder so GLTF external
-        // refs (.bin files, textures) resolve via asWebviewUri.
+        // Build a list of resource roots: the file's folder, all workspace
+        // folders, and the drive root as a fallback. This ensures that OBJ's
+        // .mtl files and their texture references (which may live in sibling
+        // or parent folders) are all accessible as vscode-resource: URLs.
+        const roots: vscode.Uri[] = [fileFolderUri];
+
+        // Add all open workspace folders
+        if (vscode.workspace.workspaceFolders) {
+            for (const wf of vscode.workspace.workspaceFolders) {
+                roots.push(wf.uri);
+            }
+        }
+
+        // Add the drive root so any absolute path in the same drive resolves.
+        // On Windows this is e.g. C:\, on macOS/Linux it is /.
+        const driveRoot = path.parse(fileUri.fsPath).root;
+        if (driveRoot) {
+            roots.push(vscode.Uri.file(driveRoot));
+        }
+
         panel.webview.options = {
             enableScripts: true,
-            localResourceRoots: [folderUri],
+            localResourceRoots: roots,
         };
 
         panel.webview.html = buildModel3dPage(panel.webview, fileUri);
