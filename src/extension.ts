@@ -11,6 +11,7 @@ import { GitProvider } from './providers/gitProvider';
 import { CustomComments } from './customComments/index';
 import { SharedStore } from './sync/sharedStore';
 import { Model3dProvider } from './model3dViewer';
+import { forceDelete } from './utils/forceDelete';
 
 
 let customComments: CustomComments;
@@ -136,6 +137,10 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage(
         `Ultraview sync file: ${sharedStore.syncFilePath}`
       );
+    }),
+
+    vscode.commands.registerCommand('ultraview.forceDelete', async (uri: vscode.Uri) => {
+      await forceDelete(uri);
     }),
   );
 }

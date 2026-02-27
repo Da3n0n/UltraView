@@ -18,6 +18,7 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 | 🎨 **Custom Comments** | Override the font, style, and color of code comments in any language |
 | 🌐 **Open URL** | Open any URL directly inside VS Code using the Simple Browser |
 | 🎭 **Dynamic Theming** | Every panel adapts to your active VS Code theme automatically — no restart needed |
+| 🗑️ **Force Delete** | Identify and kill processes locking a file or folder before deleting it — cross-platform support |
 
 
 ## Cross-IDE Sync
@@ -322,6 +323,20 @@ Pan · Zoom · Drag nodes to pin them · Click a node to open the file · Live s
 
 
 Ultraview scans up to 10,000 files. Excluded automatically: `node_modules`, `dist`, `.git`, `out`, `.next`, `build`.
+
+
+## Force Delete
+
+Ever tried to delete a file or folder only to be told it's "in use"? Ultraview's **Force Delete** identifies the culprit processes and kills them for you before proceeding with the deletion — inspired by PowerToys File Locksmith, but built directly into your IDE.
+
+Right-click any file or folder in the Explorer and select **Force Delete**.
+
+### Platform Support
+
+- **Windows**: Uses the native **Windows Restart Manager API** to accurately identify every process locking a resource.
+- **macOS & Linux**: Uses the industry-standard `lsof` tool to list open files and directories.
+
+Ultraview will always show a confirmation dialog listing the names and PIDs of the locking processes before killing them, ensuring you don't accidentally close something important.
 
 
 ## Settings
