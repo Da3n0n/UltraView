@@ -36,13 +36,45 @@ export async function forceDelete(uri: vscode.Uri) {
 
             // 2. Kill processes
             await killProcesses(processes.map(p => p.pid));
+
+            // Give the OS a moment to release handles
+            await new Promise(resolve => setTimeout(resolve, 1500));
         }
 
-        // 3. Delete the file or folder
-        if (fs.lstatSync(filePath).isDirectory()) {
-            fs.rmSync(filePath, { recursive: true, force: true });
-        } else {
-            fs.unlinkSync(filePath);
+        // 3. Delete the file or folder with retries
+        let lastError: Error | null = null;
+        const isWindows = process.platform === 'win32';
+        
+        for (let i = 0; i < 15; i++) {
+            try {
+                if (!fs.existsSync(filePath)) {
+                    break;
+                }
+                const stats = fs.lstatSync(filePath);
+                if (stats.isDirectory()) {
+                    if (isWindows) {
+                        cp.execSync(`cmd /c rmdir /s /q "${filePath}"`, { stdio: 'ignore' });
+                    } else {
+                        fs.rmSync(filePath, { recursive: true, force: true });
+                    }
+                } else {
+                    fs.unlinkSync(filePath);
+                }
+                lastError = null;
+                break;
+            } catch (error: any) {
+                lastError = error;
+                if (error.code === 'EBUSY' || error.code === 'EPERM' || error.code === 'ENOTEMPTY' || error.code === 'EACCES') {
+                    // Wait and retry with increasing delay
+                    await new Promise(resolve => setTimeout(resolve, 300 + (i * 100)));
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
         }
 
         vscode.window.showInformationMessage(`Successfully force deleted "${path.basename(filePath)}".`);
@@ -109,38 +141,47 @@ public struct RM_PROCESS_INFO {
 
 Add-Type -TypeDefinition $signature -Namespace RestartManager -Name NativeMethods
 
+$results = @()
 $sessionHandle = 0
 $sessionKey = [Guid]::NewGuid().ToString()
 $res = [RestartManager.NativeMethods]::RmStartSession([ref]$sessionHandle, 0, $sessionKey)
-if ($res -ne 0) { throw "RmStartSession failed with error $res" }
 
-try {
-    $res = [RestartManager.NativeMethods]::RmRegisterResources($sessionHandle, 1, @($path), 0, 0, 0, $null)
-    if ($res -ne 0) { throw "RmRegisterResources failed with error $res" }
-
-    $pnProcInfoNeeded = 0
-    $pnProcInfo = 0
-    $lpdwRebootReasons = 0
-    $res = [RestartManager.NativeMethods]::RmGetList($sessionHandle, [ref]$pnProcInfoNeeded, [ref]$pnProcInfo, $null, [ref]$lpdwRebootReasons)
-    
-    if ($res -eq 234) { # ERROR_MORE_DATA
-        $pnProcInfo = $pnProcInfoNeeded
-        $rgAffectedApps = New-Object RestartManager.NativeMethods+RM_PROCESS_INFO[] $pnProcInfo
-        $res = [RestartManager.NativeMethods]::RmGetList($sessionHandle, [ref]$pnProcInfoNeeded, [ref]$pnProcInfo, $rgAffectedApps, [ref]$lpdwRebootReasons)
+if ($res -eq 0) {
+    try {
+        $res = [RestartManager.NativeMethods]::RmRegisterResources($sessionHandle, 1, @($path), 0, 0, 0, $null)
         if ($res -eq 0) {
-            $rgAffectedApps | Select-Object @{Name='pid'; Expression={$_.Process.dwProcessId}}, @{Name='name'; Expression={$_.strAppName}} | ConvertTo-Json
+            $pnProcInfoNeeded = 0
+            $pnProcInfo = 0
+            $lpdwRebootReasons = 0
+            $res = [RestartManager.NativeMethods]::RmGetList($sessionHandle, [ref]$pnProcInfoNeeded, [ref]$pnProcInfo, $null, [ref]$lpdwRebootReasons)
+            
+            if ($res -eq 234) { # ERROR_MORE_DATA
+                $pnProcInfo = $pnProcInfoNeeded
+                $rgAffectedApps = New-Object RestartManager.NativeMethods+RM_PROCESS_INFO[] $pnProcInfo
+                $res = [RestartManager.NativeMethods]::RmGetList($sessionHandle, [ref]$pnProcInfoNeeded, [ref]$pnProcInfo, $rgAffectedApps, [ref]$lpdwRebootReasons)
+                if ($res -eq 0) {
+                    $results += $rgAffectedApps | Select-Object @{Name='pid'; Expression={$_.Process.dwProcessId}}, @{Name='name'; Expression={$_.strAppName}}
+                }
+            }
         }
-    } elseif ($res -eq 0) {
-        "[]"
-    } else {
-        throw "RmGetList failed with error $res"
+    } finally {
+        [RestartManager.NativeMethods]::RmEndSession($sessionHandle) | Out-Null
     }
-} finally {
-    [RestartManager.NativeMethods]::RmEndSession($sessionHandle) | Out-Null
 }
+
+# Backup: Check for processes running from this folder or mentioning it (common for node/powershell etc)
+$pathEscaped = [regex]::Escape($path)
+$cimProcesses = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match $pathEscaped -or ($_.ExecutablePath -and $_.ExecutablePath -like "*$path*") }
+foreach ($p in $cimProcesses) {
+    if ($null -eq ($results | Where-Object { $_.pid -eq $p.ProcessId })) {
+        $results += [PSCustomObject]@{ pid = $p.ProcessId; name = $p.Name }
+    }
+}
+
+$results | ConvertTo-Json
 `;
 
-        cp.exec(`powershell -NoProfile -Command "${script.replace(/\n/g, ' ')}"`, (error, stdout, stderr) => {
+        cp.exec(`powershell -NoProfile -Command & {${script}}`, (error, stdout, stderr) => {
             if (error) {
                 console.error(`PS Error: ${stderr}`);
                 resolve([]);
@@ -211,11 +252,14 @@ async function killProcesses(pids: number[]): Promise<void> {
     for (const pid of uniquePids) {
         try {
             if (isWindows) {
-                cp.execSync(`taskkill /F /PID ${pid}`);
+                cp.execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
             } else {
-                cp.execSync(`kill -9 ${pid}`);
+                cp.execSync(`kill -9 ${pid}`, { stdio: 'ignore' });
             }
+            // Give OS time to release handles
+            await new Promise(resolve => setTimeout(resolve, 200));
         } catch (e) {
+            // Process may have already exited
             console.error(`Failed to kill process ${pid}: ${e}`);
         }
     }
