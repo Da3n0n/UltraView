@@ -402,6 +402,20 @@ export class GitProvider implements vscode.WebviewViewProvider {
             const data = await res.json() as { email?: string };
             email = data.email || undefined;
           }
+          if (!email) {
+            const emailsRes = await fetch('https://api.github.com/user/emails', {
+              headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Ultraview-VSCode' }
+            });
+            if (emailsRes.ok) {
+              const emailsData = await emailsRes.json() as { email: string, primary: boolean }[];
+              const primaryEmail = emailsData.find(e => e.primary);
+              if (primaryEmail) {
+                email = primaryEmail.email;
+              } else if (emailsData.length > 0) {
+                email = emailsData[0].email;
+              }
+            }
+          }
         } else if (gitProvider === 'gitlab') {
           const res = await fetch('https://gitlab.com/api/v4/user', {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -598,6 +612,15 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 if (provider.label === 'github') {
                   const res = await fetch('https://api.github.com/user', { headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Ultraview-VSCode' } });
                   if (res.ok) { const d = await res.json() as { email?: string }; email = d.email || undefined; }
+                  if (!email) {
+                    const emailsRes = await fetch('https://api.github.com/user/emails', { headers: { 'Authorization': `Bearer ${token}`, 'User-Agent': 'Ultraview-VSCode' } });
+                    if (emailsRes.ok) {
+                      const emailsData = await emailsRes.json() as { email: string, primary: boolean }[];
+                      const primaryEmail = emailsData.find(e => e.primary);
+                      if (primaryEmail) email = primaryEmail.email;
+                      else if (emailsData.length > 0) email = emailsData[0].email;
+                    }
+                  }
                 } else if (provider.label === 'gitlab') {
                   const res = await fetch('https://gitlab.com/api/v4/user', { headers: { 'Authorization': `Bearer ${token}` } });
                   if (res.ok) { const d = await res.json() as { email?: string }; email = d.email || undefined; }

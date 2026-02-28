@@ -47,9 +47,8 @@ export async function applyLocalAccount(
 
         // 1. Set commit identity
         await gitConfig(repoPath, '--local', 'user.name', account.username);
-        if (account.email) {
-            await gitConfig(repoPath, '--local', 'user.email', account.email);
-        }
+        const email = account.email || `${account.username}@${host}`;
+        await gitConfig(repoPath, '--local', 'user.email', email);
 
         // 2. If we have a token, configure the remote URL to embed credentials
         //    so git (and VS Code SCM) authenticates transparently.
@@ -72,9 +71,9 @@ export async function applyGlobalAccount(
     try {
         // We only set global identity — we don't touch per-repo remotes here.
         await execAsync(`git config --global user.name "${account.username.replace(/"/g, '\\"')}"`);
-        if (account.email) {
-            await execAsync(`git config --global user.email "${account.email.replace(/"/g, '\\"')}"`);
-        }
+        const host = hostForProvider(account.provider);
+        const email = account.email || `${account.username}@${host}`;
+        await execAsync(`git config --global user.email "${email.replace(/"/g, '\\"')}"`);
         console.log(`[Ultraview] Applied global git identity: ${account.username}`);
     } catch (err: any) {
         console.warn('[Ultraview] Could not apply global git config:', err?.message);
