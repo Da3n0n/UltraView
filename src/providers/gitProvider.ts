@@ -267,7 +267,6 @@ export class GitProvider implements vscode.WebviewViewProvider {
           const isLocal = workspaceUri && this.accounts.getLocalAccount(workspaceUri)?.id === accountId;
 
           const option = await vscode.window.showQuickPick([
-            { label: '$(zap) Apply Credentials', description: 'Apply credentials to current workspace' },
             { label: isGlobal ? '$(close) Unset Global Account' : '$(globe) Set as Global Account', description: isGlobal ? 'Remove as default for all workspaces' : 'Use as default for all workspaces' },
             { label: isLocal ? '$(close) Unset Local Account' : '$(folder) Set as Local Account', description: isLocal ? 'Remove from this workspace' : 'Use specifically for this workspace' }
           ], { placeHolder: `Quick Actions for ${acc.username}` });
