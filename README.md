@@ -9,22 +9,19 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 ## Features
 
 
-- 
-
 ### **Database Viewer**
 
-Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed.
+- Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed.
 
 
 
 
 
 
-- 
 
 ### **Markdown Editor**
 
-Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian and GitHub styles with a rich toolbar.
+- Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian and GitHub styles with a rich toolbar.
 
 
 
@@ -35,7 +32,7 @@ Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian 
 
 ### **SVG Editor**
 
-Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
+- Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
 
 
 
@@ -46,7 +43,7 @@ Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an e
 
 ### **Code Graph**
 
-Interactive node graph showing how your files, imports, and markdown links connect. Visualize your architecture like Obsidian, but for code.
+- Interactive node graph showing how your files, imports, and markdown links connect. Visualize your architecture like Obsidian, but for code.
 
 
 
@@ -57,7 +54,7 @@ Interactive node graph showing how your files, imports, and markdown links conne
 
 ### **Git Account Manager**
 
-Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar. Switch identities per-project or globally with zero-config.
+- Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar. Switch identities per-project or globally with zero-config.
 
 
 
@@ -68,7 +65,7 @@ Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar.
 
 ### **Apply Credentials**
 
-Automatically sync Git identities to your local config and remote URLs for transparent, password-free authentication.
+- Automatically sync Git identities to your local config and remote URLs for transparent, password-free authentication.
 
 
 
@@ -79,7 +76,7 @@ Automatically sync Git identities to your local config and remote URLs for trans
 
 ### **Command Runner**
 
-Automatically detect and run commands/scripts that are available in your project. Features a Run button and supports NPM, Just, Task, Shell, Make, etc. Run any command directly from the sidebar or a full-width panel. Auto-detects per project, so only commands available in that project will show for a cleaner experience.
+- Automatically detect and run commands/scripts that are available in your project. Features a Run button and supports NPM, Just, Task, Shell, Make, etc. Run any command directly from the sidebar or a full-width panel. Auto-detects per project, so only commands available in that project will show for a cleaner experience.
 
 
 
