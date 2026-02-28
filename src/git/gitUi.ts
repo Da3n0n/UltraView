@@ -131,7 +131,10 @@ export function buildGitHtml(): string {
   <div class="section">
     <div class="section-header">
       <span class="section-title">Projects</span>
-      <button class="btn-action btn-sm" id="btn-add-project">+ Add Current</button>
+      <div style="display:flex;gap:4px">
+        <button class="btn-action btn-sm" id="btn-add-project">+ Add Current</button>
+        <button class="btn-action btn-sm" id="btn-add-repo">+ Add Repo</button>
+      </div>
     </div>
     <ul id="project-list" class="project-list"></ul>
     <div id="empty-state" class="empty-state hidden">
@@ -286,6 +289,10 @@ document.getElementById('btn-add').addEventListener('click', function() {
 
 document.getElementById('btn-add-project').addEventListener('click', function() {
   vscode.postMessage({ type: 'addCurrentProject' });
+});
+
+document.getElementById('btn-add-repo').addEventListener('click', function() {
+  vscode.postMessage({ type: 'addRepo' });
 });
 
 document.getElementById('btn-refresh').addEventListener('click', function() {

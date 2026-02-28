@@ -8,6 +8,9 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 ## Features
 
+
+
+
 Feature
 Description
 
@@ -54,8 +57,65 @@ means no matter what theme you use Ultraview will fit in
 
 
 **Force Delete**
+Identify and kill processes locking a file or folder before deleting it — cross-platform support works exactly like delete just right click in the normal explorer on the file and you see an option to force delete now next to original delete item in the right click context menu
+
+**Command Runner**
+Automatically detect and run NPM scripts, Just recipes, Task targets, and Make targets directly from the sidebar.
+
+🗄️ **Database Viewer**
+Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed
+
+
+📝 **Markdown Editor**
+Full-featured WYSIWYG editor with Rich, Raw, and Split modes — Obsidian and GitHub styles
+
+
+🖼️ **SVG Editor**
+Pan/zoom preview, syntax-highlighted code editor, Split mode, element inspector, and live sync
+
+
+🔗 **Code Graph**
+Interactive node graph showing how your files, imports, and markdown links connect — like Obsidian, but for code
+
+
+👤 **Git Account Manager**
+Manage multiple GitHub, GitLab, and Azure DevOps accounts from the sidebar
+
+
+🔑 **Apply Credentials**
+Set a Git account per-project or globally — Ultraview writes the identity and embeds credentials into your remote automatically
+
+
+🔄 **Cross-IDE Sync**
+Install in one IDE, install in another — your projects and accounts are already there
+
+
+🎨 **Custom Comments**
+Override the font, style, and color of code comments in any language
+
+
+🌐 **Open URL**
+Open any URL directly inside VS Code using the Simple Browser
+
+
+🎭 **Dynamic Theming**
+Every panel adapts to your active VS Code theme automatically — no restart needed
+
+
+�️ **Ports &amp; Processes**
+View open network ports and the processes using them; kill locks from the sidebar or open a full‑width panel
+
+
+🎛️ **Commands Panel**
+Scan your workspace for shell scripts/commands and run them directly; works in the sidebar or as a standalone panel
+
+
+🧩 **3D Model Viewer**
+Open .blend .fbx .obj .glb .usdz and more directly in VS Code
+
+
+�🗑️ **Force Delete**
 Identify and kill processes locking a file or folder before deleting it — cross-platform support
-works exactly like delte jsut igh lcik ionth nromal eplxoerr ontifle and you see an option to force delete now next to orinal delete item in the righ click context menu&nbsp;
 
 
 ## Cross-IDE Sync
@@ -118,8 +178,12 @@ To open the sync folder in Explorer: run **`Ultraview: Show Sync Folder in Explo
 
 ### Security
 
+
+
+
 Data
 Where It's Stored
+
 
 
 Usernames, emails, provider info
@@ -145,8 +209,12 @@ Manage multiple Git identities (GitHub, GitLab, Azure DevOps) directly from the 
 
 ### Authentication Methods
 
+
+
+
 Method
 Description
+
 
 
 **Browser OAuth**
@@ -210,8 +278,12 @@ Double-click any supported database or SQL file and Ultraview opens it in a clea
 
 ### Supported Formats
 
+
+
+
 Format
 Extensions
+
 
 
 SQLite
@@ -236,8 +308,12 @@ Index Files
 
 ### Viewer Tabs
 
+
+
+
 Tab
 What You Get
+
 
 
 **Data**
@@ -266,8 +342,12 @@ Open any `.md`, `.mdx`, or `.markdown` file and Ultraview replaces the default v
 
 ### View Modes
 
+
+
+
 Mode
 Description
+
 
 
 **Rich**
@@ -313,6 +393,14 @@ Action
 `Ctrl+B` / `Cmd+B`
 Bold
 
+Shortcut
+Action
+
+
+
+`Ctrl+B` / `Cmd+B`
+Bold
+
 
 `Ctrl+I` / `Cmd+I`
 Italic
@@ -337,8 +425,12 @@ Open any `.svg` file and Ultraview replaces the default viewer with an interacti
 
 ### View Modes
 
+
+
+
 Mode
 Description
+
 
 
 **Text**
@@ -381,6 +473,14 @@ Full canvas pan/zoom view — no code visible
 
 
 
+- **Middle mouse drag** — pan the canvas
+
+- **Left click** — select an SVG element and open the inspector
+
+- **Fit** — scales the SVG to fill the available canvas with padding
+
+- **1:1** — renders at true pixel size, centered
+
 - **Zoom in / Zoom out** — step zoom buttons
 
 
@@ -415,6 +515,12 @@ Click any element in the preview to open a floating inspector panel showing all 
 
 
 
+- Word wrap with comfortable padding for easy reading and editing
+
+- Undo/redo stack (up to 200 snapshots)
+
+- `Tab` inserts a 2-space indent
+
 - `Ctrl+S` / `Cmd+S` saves immediately; auto-save fires 800 ms after the last change
 
 
@@ -428,8 +534,12 @@ The editor background, toolbar, and inspector all use VS Code's sidebar CSS vari
 
 ### Shortcuts
 
+
+
+
 Shortcut
 Action
+
 
 
 `Scroll wheel`
@@ -491,8 +601,12 @@ Node colors are fully customizable — click any dot in the legend to open the c
 
 ### Edge Types
 
+
+
+
 Edge
 Meaning
+
 
 
 `import`
@@ -518,9 +632,13 @@ Pan · Zoom · Drag nodes to pin them · Click a node to open the file · Live s
 
 ### Physics Settings
 
+
+
+
 Setting
 Range
 Effect
+
 
 
 Repulsion
@@ -546,6 +664,29 @@ Gravity pulling nodes toward the canvas center
 Ultraview scans up to 10,000 files. Excluded automatically: `node_modules`, `dist`, `.git`, `out`, `.next`, `build`.
 
 
+## Command Runner
+
+Ultraview scans your workspace for task runners and scripts, presenting them in a clean list for quick execution. No more hunting through `package.json` or trying to remember `just` recipe names.
+
+### Supported Runners
+
+*   **NPM / Yarn / PNPM / Bun**: Automatically detects `package.json` and uses the appropriate lockfile to determine the runner.
+*   **Just**: Detects `justfile` and extracts recipes with their documentation.
+*   **Task**: Detects `Taskfile.yml` and extracts task names and descriptions.
+*   **Make**: Detects `Makefile` and lists targets (supports `.PHONY` and documentation comments).
+
+### Execution
+
+Click the **▶ Run** button next to any command to execute it in a dedicated "UltraView: Commands" terminal. You can also click the command row itself to run it immediately.
+
+### Filtering & Views
+
+*   **Live Search**: Filter through dozens of commands by name or description instantly.
+*   **Categories**: Commands are automatically grouped by runner type (NPM, Just, etc.).
+*   **Full Panel**: Toggle between the sidebar view and a full-width editor panel using the ⬡ icon.
+
+
+
 ## Force Delete
 
 Ever tried to delete a file or folder only to be told it's "in use"? Ultraview's **Force Delete** identifies the culprit processes and kills them for you before proceeding with the deletion — inspired by PowerToys File Locksmith, but built directly into your IDE.
@@ -562,10 +703,7 @@ Right-click any file or folder in the Explorer and select **Force Delete**.
 
 
 
-- **macOS &amp; Linux**: Uses the industry-standard `lsof` tool to list open files and directories.
-
-
-
+- **macOS & Linux**: Uses the industry-standard `lsof` tool to list open files and directories.
 
 
 Ultraview will always show a confirmation dialog listing the names and PIDs of the locking processes before killing them, ensuring you don't accidentally close something important.
@@ -578,9 +716,13 @@ All settings live under the `ultraview.*` namespace (`Ctrl+,` → search "Ultrav
 
 ### Markdown
 
+
+
+
 Setting
 Default
 Description
+
 
 
 `ultraview.markdown.defaultView`
@@ -620,8 +762,12 @@ Enable word wrap in raw editor
 
 ### Code Graph
 
+
+
+
 Setting
 Description
+
 
 
 `ultraview.codeGraph.nodeColors.*`
@@ -650,9 +796,13 @@ Hide legend and settings panel
 
 ### Database
 
+
+
+
 Setting
 Default
 Description
+
 
 
 `ultraview.database.pageSize`
@@ -682,9 +832,13 @@ Auto-applied row limit for queries
 
 ### Custom Comments
 
+
+
+
 Setting
 Default
 Description
+
 
 
 `ultraview.customComments.enabled`
@@ -709,8 +863,12 @@ Optional color override for comments
 
 ## Commands
 
+
+
+
 Command
 Description
+
 
 
 `Ultraview: Open Code Graph`
@@ -723,6 +881,14 @@ Open as a full-width editor panel
 
 `Ultraview: Open Git Projects Manager`
 Open the Git / Projects panel as editor
+
+
+`Ultraview: Open Ports &amp; Processes`
+Open the Ports &amp; Processes panel as a full-width editor
+
+
+`Ultraview: Open Commands`
+Open the Commands panel as a full-width editor (scan &amp; run workspace commands)
 
 
 `Ultraview: Open URL`
@@ -757,7 +923,7 @@ Toggle custom comment font on/off
 
 
 
-- **Open a file** — double-click a `.db`, `.sqlite`, `.md`, `.svg`, or other supported file in Explorer
+- **Open a file** — double-click a `.db`, `.sqlite`, `.md`, `.svg`, `.glb`, `.gltf`, or other supported file in Explorer
 
 
 
@@ -768,6 +934,16 @@ Toggle custom comment font on/off
 
 
 - **Open the Git panel** — click the Git icon in the activity bar
+
+
+
+
+- **View ports &amp; processes** — open the Ports &amp; Processes sidebar or run `Ultraview: Open Ports &amp; Processes` to bring it up as a full‑width panel
+
+
+
+
+- **Run workspace commands** — open the Commands sidebar or use `Ultraview: Open Commands` to scan your project and execute scripts from a terminal
 
 
 
@@ -785,8 +961,12 @@ Toggle custom comment font on/off
 
 ## Libraries Used
 
+
+
+
 Library
 Purpose
+
 
 
 `sql.js`

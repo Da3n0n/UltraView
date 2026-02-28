@@ -8,6 +8,8 @@ import { SvgProvider } from './providers/svgProvider';
 import { IndexProvider } from './providers/indexProvider';
 import { CodeGraphProvider } from './providers/codeGraphProvider';
 import { GitProvider } from './providers/gitProvider';
+import { PortsProvider } from './providers/portsProvider';
+import { CommandsProvider } from './providers/commandsProvider';
 import { CustomComments } from './customComments/index';
 import { SharedStore } from './sync/sharedStore';
 import { Model3dProvider } from './model3dViewer';
@@ -78,11 +80,27 @@ export async function activate(context: vscode.ExtensionContext) {
       gitProvider,
       { webviewOptions: { retainContextWhenHidden: true } }
     ),
+    vscode.window.registerWebviewViewProvider(
+      PortsProvider.viewId,
+      new PortsProvider(context),
+      { webviewOptions: { retainContextWhenHidden: true } }
+    ),
     vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
       CodeGraphProvider.openAsPanel(context);
     }),
     vscode.commands.registerCommand('ultraview.openGitProjects', () => {
       GitProvider.openAsPanel(context, sharedStore);
+    }),
+    vscode.commands.registerCommand('ultraview.openPorts', () => {
+      PortsProvider.openAsPanel(context);
+    }),
+    vscode.window.registerWebviewViewProvider(
+      CommandsProvider.viewId,
+      new CommandsProvider(context),
+      { webviewOptions: { retainContextWhenHidden: true } }
+    ),
+    vscode.commands.registerCommand('ultraview.openCommands', () => {
+      CommandsProvider.openAsPanel(context);
     }),
     vscode.commands.registerCommand('ultraview.openUrl', async (url?: string) => {
       if (url && typeof url === 'string') {
