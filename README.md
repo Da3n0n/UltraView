@@ -28,8 +28,7 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 
 
-- 
-
+  
 ### **SVG Editor**
 
 - Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
@@ -38,41 +37,21 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 
 
-
-- 
-
 ### **Code Graph**
 
 - Interactive node graph showing how your files, imports, and markdown links connect. Visualize your architecture like Obsidian, but for code.
 
 
 
-
-
-
-- 
-
 ### **Git Account Manager**
 
 - Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar. Switch identities per-project or globally with zero-config.
 
 
-
-
-
-
-- 
-
 ### **Apply Credentials**
 
 - Automatically sync Git identities to your local config and remote URLs for transparent, password-free authentication.
 
-
-
-
-
-
-- 
 
 ### **Command Runner**
 
@@ -80,73 +59,43 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 
 
-
-
-
-- 
-
 ### **Ports &amp; Processes**
 
-Easily manage and kill open ports and processes within a simple UI. Identify locks and free up resources instantly.
+- Easily manage and kill open ports and processes within a simple UI. Identify locks and free up resources instantly.
 
 
 
-
-
-
-- 
 
 ### **Cross-IDE Sync**
 
-Settings, projects, and Git accounts are synced across VS Code, Antigravity, Cursor, and Windsurf automatically via local storage.
+- Settings, projects, and Git accounts are synced across VS Code, Antigravity, Cursor, and Windsurf automatically via local storage.
 
 
 
-
-
-
-- 
 
 ### **3D Model Viewer**
 
-View 3D models (.glb, .gltf, .fbx, .obj, .stl, .usdz, .blend) directly inside your IDE.
+- View 3D models (.glb, .gltf, .fbx, .obj, .stl, .usdz, .blend) directly inside your IDE.
 
 
-
-
-
-
-- 
 
 ### **Open URL**
 
-Quickly open any URL or webpage in a built-in browser for a seamless documentation or preview experience.
+- Quickly open any URL or webpage in a built-in browser for a seamless documentation or preview experience.
 
-
-
-
-
-
-- 
 
 ### **Dynamic Theming**
 
-Every panel adapts to your active VS Code theme automatically — no restart needed.
+- Every panel adapts to your active VS Code theme automatically — no restart needed.
 
-
-
-
-
-
-- 
 
 ### **Force Delete**
 
-Identify and kill processes locking a file or folder before deleting it — cross-platform support built into the Explorer context menu.
+- Identify and kill processes locking a file or folder before deleting it — cross-platform support built into the Explorer context menu.
 
 
 
-
+--------------------------------
 
 
 
