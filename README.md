@@ -193,13 +193,6 @@ When you set an account for a project, Ultraview automatically:
 
 - Embeds your token into the `origin` remote URL so VS Code's built-in Source Control authenticates transparently — no password prompts
 
-
-# Before
-https://github.com/org/repo
-
-# After (credentials applied, shown for clarity — never stored in sync.json)
-https://username:token@github.com/org/repo
-`
 When you remove or change an account, Ultraview strips the embedded credentials and restores the clean URL automatically.
 
 
