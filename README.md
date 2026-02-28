@@ -15,26 +15,15 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 
 
-
-
-
-
 ### **Markdown Editor**
 
 - Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian and GitHub styles with a rich toolbar.
-
-
-
-
 
 
   
 ### **SVG Editor**
 
 - Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
-
-
-
 
 
 ### **Code Graph**
@@ -58,12 +47,9 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 - Automatically detect and run commands/scripts that are available in your project. Features a Run button and supports NPM, Just, Task, Shell, Make, etc. Run any command directly from the sidebar or a full-width panel. Auto-detects per project, so only commands available in that project will show for a cleaner experience.
 
 
-
 ### **Ports &amp; Processes**
 
 - Easily manage and kill open ports and processes within a simple UI. Identify locks and free up resources instantly.
-
-
 
 
 ### **Cross-IDE Sync**
@@ -71,12 +57,9 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 - Settings, projects, and Git accounts are synced across VS Code, Antigravity, Cursor, and Windsurf automatically via local storage.
 
 
-
-
 ### **3D Model Viewer**
 
 - View 3D models (.glb, .gltf, .fbx, .obj, .stl, .usdz, .blend) directly inside your IDE.
-
 
 
 ### **Open URL**
