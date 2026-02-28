@@ -273,10 +273,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
           ], { placeHolder: `Quick Actions for ${acc.username}` });
 
           if (option) {
-            if (option.label.includes('Apply')) {
-              await applyLocalAccount(workspaceUri, acc, acc.token);
-              vscode.window.showInformationMessage(`✓ Git credentials applied for ${acc.username}`);
-            } else if (option.label.includes('Global')) {
+            if (option.label.includes('Global')) {
               this.accounts.setGlobalAccount(isGlobal ? undefined : accountId);
               if (!isGlobal) await applyGlobalAccount(acc);
               this.postState();
@@ -787,10 +784,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
           ], { placeHolder: `Quick Actions for ${acc.username}` });
 
           if (option) {
-            if (option.label.includes('Apply')) {
-              await applyLocalAccount(workspaceUri, acc, acc.token);
-              vscode.window.showInformationMessage(`✓ Git credentials applied for ${acc.username}`);
-            } else if (option.label.includes('Global')) {
+            if (option.label.includes('Global')) {
               accounts.setGlobalAccount(isGlobal ? undefined : accountId);
               if (!isGlobal) await applyGlobalAccount(acc);
               // Trigger refresh
