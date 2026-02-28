@@ -6,46 +6,97 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 &nbsp;Install it once, stay synced across **VS Code**, **Antigravity**, **Cursor**, and **Windsurf**.
 
 
-## Features
+## 
 
-🗄️ **Database Viewer**
+## Database Viewer
+
 Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed.
 
-📝 **Markdown Editor**
+
+
+
+### Markdown Editor
+
 Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian and GitHub styles with a rich toolbar.
 
-🖼️ **SVG Editor**
+
+
+
+### SVG Editor
+
 Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
 
-🔗 **Code Graph**
+
+
+
+### Code Graph
+
 Interactive node graph showing how your files, imports, and markdown links connect. Visualize your architecture like Obsidian, but for code.
 
-👤 **Git Account Manager**
+
+
+
+### Git Account Manager
+
 Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar. Switch identities per-project or globally with zero-config.
 
-🔑 **Apply Credentials**
+
+
+
+### Apply Credentials
+
 Automatically sync Git identities to your local config and remote URLs for transparent, password-free authentication.
 
-⚡ **Command Runner**
-Automatically detect and run NPM scripts, Just recipes, Task targets, and Make targets. Run any command directly from the sidebar or a full-width panel.
 
-🚦 **Ports & Processes**
+
+
+### Command Runner
+
+Automatically detect and run commands/scripts that are available in your project. Features a Run button and supports NPM, Just, Task, Shell, Make, etc. Run any command directly from the sidebar or a full-width panel. Auto-detects per project, so only commands available in that project will show for a cleaner experience.
+
+
+
+
+### Ports &amp; Processes
+
 Easily manage and kill open ports and processes within a simple UI. Identify locks and free up resources instantly.
 
-🔄 **Cross-IDE Sync**
+
+
+
+### Cross-IDE Sync
+
 Settings, projects, and Git accounts are synced across VS Code, Antigravity, Cursor, and Windsurf automatically via local storage.
 
-🧩 **3D Model Viewer**
+
+
+
+### 3D Model Viewer
+
 View 3D models (.glb, .gltf, .fbx, .obj, .stl, .usdz, .blend) directly inside your IDE.
 
-🌐 **Open URL**
+
+
+&nbsp;Open URL
+
+
 Quickly open any URL or webpage in a built-in browser for a seamless documentation or preview experience.
 
-🎨 **Dynamic Theming**
+
+
+
+### Dynamic Theming
+
 Every panel adapts to your active VS Code theme automatically — no restart needed.
 
-🗑️ **Force Delete**
+
+
+
+### Force Delete
+
 Identify and kill processes locking a file or folder before deleting it — cross-platform support built into the Explorer context menu.
+
+
 
 
 ## Cross-IDE Sync
@@ -108,12 +159,8 @@ To open the sync folder in Explorer: run **`Ultraview: Show Sync Folder in Explo
 
 ### Security
 
-
-
-
 Data
 Where It's Stored
-
 
 
 Usernames, emails, provider info
@@ -139,12 +186,8 @@ Manage multiple Git identities (GitHub, GitLab, Azure DevOps) directly from the 
 
 ### Authentication Methods
 
-
-
-
 Method
 Description
-
 
 
 **Browser OAuth**
@@ -208,12 +251,8 @@ Double-click any supported database or SQL file and Ultraview opens it in a clea
 
 ### Supported Formats
 
-
-
-
 Format
 Extensions
-
 
 
 SQLite
@@ -238,12 +277,8 @@ Index Files
 
 ### Viewer Tabs
 
-
-
-
 Tab
 What You Get
-
 
 
 **Data**
@@ -272,12 +307,8 @@ Open any `.md`, `.mdx`, or `.markdown` file and Ultraview replaces the default v
 
 ### View Modes
 
-
-
-
 Mode
 Description
-
 
 
 **Rich**
@@ -297,21 +328,9 @@ Editor and preview side by side, synced in real time
 Bold, Italic, Strikethrough, Inline Code, Headings (H1–H6), Bullet / Numbered / Task lists, Blockquote, Code Block, Table, Insert Link, Insert Image, Style switcher (Obsidian / GitHub), and View mode selector.
 
 
-### Styles
 
 
-- **Obsidian** — Custom fonts, colored headings, styled blockquotes and code blocks
-
-
-
-
-- **GitHub** — GitHub-flavored markdown with proper tables, checkboxes, and spacing
-
-
-
-
-
-### Status Bar &amp; Shortcuts
+## Status Bar &amp; Shortcuts
 
 Live word count, line count, and character count at the bottom of the editor.
 
@@ -323,9 +342,9 @@ Action
 `Ctrl+B` / `Cmd+B`
 Bold
 
+
 Shortcut
 Action
-
 
 
 `Ctrl+B` / `Cmd+B`
@@ -348,19 +367,18 @@ Save
 Insert 2-space indent
 
 
-## SVG Editor
+
+
+
+# SVG Editor
 
 Open any `.svg` file and Ultraview replaces the default viewer with an interactive editor featuring pan/zoom preview, syntax-highlighted code, and live split editing.
 
 
-### View Modes
-
-
-
+## View Modes
 
 Mode
 Description
-
 
 
 **Text**
@@ -405,11 +423,23 @@ Full canvas pan/zoom view — no code visible
 
 - **Middle mouse drag** — pan the canvas
 
+
+
+
 - **Left click** — select an SVG element and open the inspector
+
+
+
 
 - **Fit** — scales the SVG to fill the available canvas with padding
 
+
+
+
 - **1:1** — renders at true pixel size, centered
+
+
+
 
 - **Zoom in / Zoom out** — step zoom buttons
 
@@ -447,9 +477,18 @@ Click any element in the preview to open a floating inspector panel showing all 
 
 - Word wrap with comfortable padding for easy reading and editing
 
+
+
+
 - Undo/redo stack (up to 200 snapshots)
 
+
+
+
 - `Tab` inserts a 2-space indent
+
+
+
 
 - `Ctrl+S` / `Cmd+S` saves immediately; auto-save fires 800 ms after the last change
 
@@ -464,12 +503,8 @@ The editor background, toolbar, and inspector all use VS Code's sidebar CSS vari
 
 ### Shortcuts
 
-
-
-
 Shortcut
 Action
-
 
 
 `Scroll wheel`
@@ -531,12 +566,8 @@ Node colors are fully customizable — click any dot in the legend to open the c
 
 ### Edge Types
 
-
-
-
 Edge
 Meaning
-
 
 
 `import`
@@ -562,13 +593,9 @@ Pan · Zoom · Drag nodes to pin them · Click a node to open the file · Live s
 
 ### Physics Settings
 
-
-
-
 Setting
 Range
 Effect
-
 
 
 Repulsion
@@ -598,22 +625,45 @@ Ultraview scans up to 10,000 files. Excluded automatically: `node_modules`, `dis
 
 Ultraview scans your workspace for task runners and scripts, presenting them in a clean list for quick execution. No more hunting through `package.json` or trying to remember `just` recipe names.
 
+
 ### Supported Runners
 
-*   **NPM / Yarn / PNPM / Bun**: Automatically detects `package.json` and uses the appropriate lockfile to determine the runner.
-*   **Just**: Detects `justfile` and extracts recipes with their documentation.
-*   **Task**: Detects `Taskfile.yml` and extracts task names and descriptions.
-*   **Make**: Detects `Makefile` and lists targets (supports `.PHONY` and documentation comments).
 
-### Execution
+- **NPM / Yarn / PNPM / Bun**: Automatically detects `package.json` and uses the appropriate lockfile to determine the runner.
 
-Click the **▶ Run** button next to any command to execute it in a dedicated "UltraView: Commands" terminal. You can also click the command row itself to run it immediately.
 
-### Filtering & Views
 
-*   **Live Search**: Filter through dozens of commands by name or description instantly.
-*   **Categories**: Commands are automatically grouped by runner type (NPM, Just, etc.).
-*   **Full Panel**: Toggle between the sidebar view and a full-width editor panel using the ⬡ icon.
+
+- **Just**: Detects `justfile` and extracts recipes with their documentation.
+
+
+
+
+- **Task**: Detects `Taskfile.yml` and extracts task names and descriptions.
+
+
+
+
+- **Make**: Detects `Makefile` and lists targets (supports `.PHONY` and documentation comments)
+
+
+
+### Filtering &amp; Views
+
+
+- **Live Search**: Filter through dozens of commands by name or description instantly.
+
+
+
+
+- **Categories**: Commands are automatically grouped by runner type (NPM, Just, etc.).
+
+
+
+
+- **Full Panel**: Toggle between the sidebar view and a full-width editor panel using the ⬡ icon.
+
+
 
 
 
@@ -633,7 +683,10 @@ Right-click any file or folder in the Explorer and select **Force Delete**.
 
 
 
-- **macOS & Linux**: Uses the industry-standard `lsof` tool to list open files and directories.
+- **macOS &amp; Linux**: Uses the industry-standard `lsof` tool to list open files and directories.
+
+
+
 
 
 Ultraview will always show a confirmation dialog listing the names and PIDs of the locking processes before killing them, ensuring you don't accidentally close something important.
@@ -646,13 +699,9 @@ All settings live under the `ultraview.*` namespace (`Ctrl+,` → search "Ultrav
 
 ### Markdown
 
-
-
-
 Setting
 Default
 Description
-
 
 
 `ultraview.markdown.defaultView`
@@ -692,12 +741,8 @@ Enable word wrap in raw editor
 
 ### Code Graph
 
-
-
-
 Setting
 Description
-
 
 
 `ultraview.codeGraph.nodeColors.*`
@@ -726,13 +771,9 @@ Hide legend and settings panel
 
 ### Database
 
-
-
-
 Setting
 Default
 Description
-
 
 
 `ultraview.database.pageSize`
@@ -762,13 +803,9 @@ Auto-applied row limit for queries
 
 ### Custom Comments
 
-
-
-
 Setting
 Default
 Description
-
 
 
 `ultraview.customComments.enabled`
@@ -793,12 +830,8 @@ Optional color override for comments
 
 ## Commands
 
-
-
-
 Command
 Description
-
 
 
 `Ultraview: Open Code Graph`
@@ -813,7 +846,7 @@ Open as a full-width editor panel
 Open the Git / Projects panel as editor
 
 
-`Ultraview: Open Ports &amp; Processes`
+`Ultraview: Open Ports &amp;amp;amp;amp;amp; Processes`
 Open the Ports &amp; Processes panel as a full-width editor
 
 
@@ -868,7 +901,7 @@ Toggle custom comment font on/off
 
 
 
-- **View ports &amp; processes** — open the Ports &amp; Processes sidebar or run `Ultraview: Open Ports &amp; Processes` to bring it up as a full‑width panel
+- **View ports &amp; processes** — open the Ports &amp; Processes sidebar or run `Ultraview: Open Ports &amp;amp;amp;amp;amp; Processes` to bring it up as a full‑width panel
 
 
 
@@ -891,12 +924,8 @@ Toggle custom comment font on/off
 
 ## Libraries Used
 
-
-
-
 Library
 Purpose
-
 
 
 `sql.js`
