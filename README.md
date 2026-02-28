@@ -1,4 +1,4 @@
-# Ultraview — All-in-One VS Code Extension
+# Ultraview — the ultra code extension
 
 Ultraview packs a full suite of viewers, editors, and developer tools directly inside VS Code, Cursor, Windsurf, or any VS Code-compatible IDE.
 
