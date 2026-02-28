@@ -8,114 +8,44 @@ Ultraview packs a full suite of viewers, editors, and developer tools directly i
 
 ## Features
 
-
-
-
-Feature
-Description
-
-
-**Database Viewer**
-Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed
-
-
-**Markdown Editor**
-Full-featured WYSIWYG editor with Rich, Raw, and Split mode , Propeer toolbar for markdown editing wiht ease
-
-
-**SVG Editor (alpha)**
-Pan/zoom preview, syntax-highlighted code editor, Split mode, element inspector, and live sync&nbsp; code and live SVG side by side , path editor and spline control coming soon for making and editing&nbsp;SVG quick
-
-
-**Code Graph (alpha)**
-obsidian like Interactive node graph showing how your files, imports, and markdown links connect — like Obsidian, but for code and notes right wihtin VS code - option for sidebar ot panel for multeiplviews and full cusotmaizion of layout&nbsp;
-
-
-**Git Account Manager**
-Manage multiple GitHub, GitLab, and Azure DevOps accounts from the sidebar 🔑&nbsp;**Apply Credentials&nbsp;**Set a Git account per-project or globally — Ultraview writes the identity and embeds credentials into your remote automatically
-
-
-**Port / Process manager**
-easily manage , and kill open ports and processes in simple UI within VS code&nbsp;
-
-
-**Cross-IDE Sync**
-Install in one IDE, install in another — thats it Git Accounts and Projects andother ultraview settings are synced across IDE's&nbsp;
-
-
-**3D Viewer**
-View 3D models directly inside VS code ,&nbsp; .blend (limited) .fbx .obj .glb .usdz (wiithout crate)
-
-
-**Open URL**
-Quick open any url or webpage directly inside IDE this allows us to also open URL nodes from Codegraph in tab lie opening a text file thohgcodegraph nodes owuld oipen text ediot wlle url wouod open broewr for seamless experience in the coedegraph.
-
-
-**Dynamic Theming**
-Every panel adapts to your active VS Code theme automatically — no restart needed
-means no matter what theme you use Ultraview will fit in
-
-
-**Force Delete**
-Identify and kill processes locking a file or folder before deleting it — cross-platform support works exactly like delete just right click in the normal explorer on the file and you see an option to force delete now next to original delete item in the right click context menu
-
-**Command Runner**
-Automatically detect and run NPM scripts, Just recipes, Task targets, and Make targets directly from the sidebar.
-
 🗄️ **Database Viewer**
-Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed
-
+Open SQLite, DuckDB, Access, and SQL files with a clean, paginated table view — no external client needed.
 
 📝 **Markdown Editor**
-Full-featured WYSIWYG editor with Rich, Raw, and Split modes — Obsidian and GitHub styles
-
+Full-featured WYSIWYG editor with Rich, Raw, and Split modes. Supports Obsidian and GitHub styles with a rich toolbar.
 
 🖼️ **SVG Editor**
-Pan/zoom preview, syntax-highlighted code editor, Split mode, element inspector, and live sync
-
+Interactive preview with pan/zoom, syntax-highlighted code, Split mode, and an element inspector for real-time adjustments.
 
 🔗 **Code Graph**
-Interactive node graph showing how your files, imports, and markdown links connect — like Obsidian, but for code
-
+Interactive node graph showing how your files, imports, and markdown links connect. Visualize your architecture like Obsidian, but for code.
 
 👤 **Git Account Manager**
-Manage multiple GitHub, GitLab, and Azure DevOps accounts from the sidebar
-
+Manage multiple GitHub, GitLab, and Azure DevOps accounts from a single sidebar. Switch identities per-project or globally with zero-config.
 
 🔑 **Apply Credentials**
-Set a Git account per-project or globally — Ultraview writes the identity and embeds credentials into your remote automatically
+Automatically sync Git identities to your local config and remote URLs for transparent, password-free authentication.
 
+⚡ **Command Runner**
+Automatically detect and run NPM scripts, Just recipes, Task targets, and Make targets. Run any command directly from the sidebar or a full-width panel.
+
+🚦 **Ports & Processes**
+Easily manage and kill open ports and processes within a simple UI. Identify locks and free up resources instantly.
 
 🔄 **Cross-IDE Sync**
-Install in one IDE, install in another — your projects and accounts are already there
-
-
-🎨 **Custom Comments**
-Override the font, style, and color of code comments in any language
-
-
-🌐 **Open URL**
-Open any URL directly inside VS Code using the Simple Browser
-
-
-🎭 **Dynamic Theming**
-Every panel adapts to your active VS Code theme automatically — no restart needed
-
-
-�️ **Ports &amp; Processes**
-View open network ports and the processes using them; kill locks from the sidebar or open a full‑width panel
-
-
-🎛️ **Commands Panel**
-Scan your workspace for shell scripts/commands and run them directly; works in the sidebar or as a standalone panel
-
+Settings, projects, and Git accounts are synced across VS Code, Antigravity, Cursor, and Windsurf automatically via local storage.
 
 🧩 **3D Model Viewer**
-Open .blend .fbx .obj .glb .usdz and more directly in VS Code
+View 3D models (.glb, .gltf, .fbx, .obj, .stl, .usdz, .blend) directly inside your IDE.
 
+🌐 **Open URL**
+Quickly open any URL or webpage in a built-in browser for a seamless documentation or preview experience.
 
-�🗑️ **Force Delete**
-Identify and kill processes locking a file or folder before deleting it — cross-platform support
+🎨 **Dynamic Theming**
+Every panel adapts to your active VS Code theme automatically — no restart needed.
+
+🗑️ **Force Delete**
+Identify and kill processes locking a file or folder before deleting it — cross-platform support built into the Explorer context menu.
 
 
 ## Cross-IDE Sync
