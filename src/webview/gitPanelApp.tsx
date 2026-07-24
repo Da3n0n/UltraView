@@ -211,30 +211,36 @@ function App() {
             <>
                 <div className="git-inline">{chips}</div>
                 <div className="project-actions-row">
-                    {gitStatus && (gitStatus.localChanges > 0 || gitStatus.ahead > 0) && (
-                        <button
-                            className="mini-button push"
-                            disabled={isPending || isChecking}
-                            onClick={() => runProjectCommand('gitPush', project.id)}
-                        >
-                            Push
-                        </button>
-                    )}
+                    {/* Pull button — only when remote has commits we don't have */}
                     {gitStatus && gitStatus.behind > 0 && (
                         <button
                             className="mini-button pull"
                             disabled={isPending || isChecking}
                             onClick={() => runProjectCommand('gitPull', project.id)}
+                            title="Pull remote changes (no local conflicts)"
                         >
-                            Pull
+                            ↓ Pull {gitStatus.behind}
                         </button>
                     )}
+                    {/* Push button — when local has uncommitted changes OR local commits not on remote */}
+                    {gitStatus && (gitStatus.localChanges > 0 || gitStatus.ahead > 0) && (
+                        <button
+                            className="mini-button push"
+                            disabled={isPending || isChecking}
+                            onClick={() => runProjectCommand('gitPush', project.id)}
+                            title="Push local commits to remote"
+                        >
+                            ↑ Push {gitStatus.ahead + gitStatus.localChanges}
+                        </button>
+                    )}
+                    {/* Sync button — always available, handles all cases (commit + pull + push) */}
                     <button
                         className="mini-button sync"
                         disabled={isPending}
                         onClick={() => runProjectCommand('gitSync', project.id)}
+                        title="Sync both directions: commit local, pull remote, push back"
                     >
-                        {isPending ? 'Syncing…' : 'Sync'}
+                        {isPending ? '⟳ Syncing…' : '⟲ Sync'}
                     </button>
                 </div>
             </>
@@ -375,23 +381,33 @@ function App() {
                                             </div>
                                         </div>
                                         <div className="account-actions">
-                                            {account.authMethod === 'oauth' &&
-                                                account.authStatus &&
-                                                account.authStatus !== 'valid' && (
-                                                    <button
-                                                        className="mini-button"
-                                                        onClick={() =>
-                                                            getVscode()?.postMessage({
-                                                                type: 'reAuthAccount',
-                                                                accountId: account.id,
-                                                            } satisfies GitPanelOutboundMessage)
-                                                        }
-                                                    >
-                                                        Re-auth
-                                                    </button>
-                                                )}
+                                            {/* Show "Re-auth" for ANY oauth account (valid or not) so the user
+                                                can refresh the token / add new scopes at any time. The button
+                                                goes directly to the browser OAuth flow (no menu). */}
+                                            {(account.authMethod === 'oauth' ||
+                                                account.provider === 'github' ||
+                                                account.provider === 'gitlab' ||
+                                                account.provider === 'azure') && (
+                                                <button
+                                                    className="mini-button"
+                                                    title={
+                                                        account.authMethod === 'oauth'
+                                                            ? 'Re-authenticate via browser (adds new scopes like workflow)'
+                                                            : 'Sign in via browser (OAuth)'
+                                                    }
+                                                    onClick={() =>
+                                                        getVscode()?.postMessage({
+                                                            type: 'reAuthAccount',
+                                                            accountId: account.id,
+                                                        } satisfies GitPanelOutboundMessage)
+                                                    }
+                                                >
+                                                    Re-auth
+                                                </button>
+                                            )}
                                             <button
                                                 className="mini-button"
+                                                title="Manage SSH key, token, or browser re-auth"
                                                 onClick={() =>
                                                     getVscode()?.postMessage({
                                                         type: 'authOptions',
@@ -399,7 +415,7 @@ function App() {
                                                     } satisfies GitPanelOutboundMessage)
                                                 }
                                             >
-                                                Auth
+                                                Auth…
                                             </button>
                                             <button
                                                 className="mini-button"

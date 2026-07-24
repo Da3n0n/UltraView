@@ -182,6 +182,101 @@ function clearIndexLock(projectPath: string): void {
     }
 }
 
+/**
+ * Detects the GitHub/GitLab "This repository moved" redirect hint that the
+ * server prints on stderr (e.g. when an org renames a repo, or transfers it
+ * to a new owner). Returns the new location URL if found, else undefined.
+ *
+ * Example stderr:
+ *   remote: This repository moved. Please use the new location:
+ *   remote:   https://github.com/Vizualflow/UnrealSync.git
+ */
+function parseMovedRepository(stderr: string): string | undefined {
+    if (!stderr) return undefined;
+    const m = stderr.match(/remote:\s*(?:This repository moved|Please use the new location)[\s\S]*?remote:\s*(\S+github\.com[^\s]+|\S+gitlab\.com[^\s]+|git@[^\s]+)/i);
+    if (m && m[1]) return m[1].trim().replace(/\.git$/, '.git');
+    // Fallback: any github.com / gitlab.com URL in the redirect block
+    const m2 = stderr.match(/remote:\s*((?:https:\/\/(?:github\.com|gitlab\.com)\/[^\s]+|git@[^\s]+))/i);
+    if (m2 && m2[1]) return m2[1].trim();
+    return undefined;
+}
+
+/**
+ * Updates the 'origin' remote URL to a new location. Re-embeds any credentials
+ * that were on the existing origin URL so auth continues to work after the
+ * redirect. Returns the new URL (without credentials) for display purposes.
+ */
+async function rewriteOriginRemote(
+    projectPath: string,
+    newUrl: string,
+    run: GitCommandRunner
+): Promise<string> {
+    // Preserve any embedded credentials from the existing origin URL
+    let credentialedNew = newUrl;
+    try {
+        const { stdout } = await run('git remote get-url origin');
+        const current = stdout.trim();
+        const credMatch = current.match(/^https:\/\/([^@\/:]+):([^@]+)@/);
+        if (credMatch && newUrl.startsWith('https://')) {
+            credentialedNew = newUrl.replace(
+                'https://',
+                `https://${credMatch[1]}:${credMatch[2]}@`
+            );
+        }
+    } catch {
+        /* no existing origin / no credentials — push as-is */
+    }
+    await run(`git remote set-url origin "${credentialedNew.replace(/"/g, '\\"')}"`);
+    return newUrl;
+}
+
+/**
+ * Detects transient network/server errors that should be retried with backoff.
+ * These are NOT user errors (auth, scope, branch protection) — they're
+ * momentary blips from the remote side or local connectivity.
+ */
+function isTransientGitError(stderr: string, message: string): boolean {
+    const text = `${stderr || ''}\n${message || ''}`.toLowerCase();
+    if (!text) return false;
+    if (/internal server error|500|502|503|504|service unavailable|bad gateway|gateway timeout/.test(text)) return true;
+    if (/connection (reset|refused|aborted|closed|dropped)/.test(text)) return true;
+    if (/timed? ?out|timeout/.test(text) && !/stream timeout/i.test(text)) return true;
+    if (/could not resolve host|temporary failure in name resolution/.test(text)) return true;
+    if (/tls|ssl|econnreset|eai_again|enetunreach|enotfound/.test(text)) return true;
+    if (/the remote end hung up unexpectedly/.test(text)) return true;
+    if (/rpc failed/.test(text) && !/git-receive-pack not permitted/i.test(text)) return true;
+    if (/empty reply from server/.test(text)) return true;
+    return false;
+}
+
+/**
+ * Wraps a git operation with up to 3 retries on transient errors. Uses
+ * exponential backoff (500ms, 1s, 2s). Non-transient errors propagate
+ * immediately so the caller can run real recovery (e.g. workflow scope fix).
+ */
+async function withTransientRetry<T>(
+    op: () => Promise<T>,
+    label: string,
+    maxAttempts: number = 3
+): Promise<T> {
+    let lastErr: any;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+            return await op();
+        } catch (err: any) {
+            lastErr = err;
+            const stderr = err?.stderr ?? err?.message ?? '';
+            if (!isTransientGitError(stderr, err?.message ?? '')) {
+                throw err;
+            }
+            if (attempt >= maxAttempts) break;
+            const delayMs = 500 * Math.pow(2, attempt - 1);
+            await new Promise((r) => setTimeout(r, delayMs));
+        }
+    }
+    throw lastErr;
+}
+
 /** Write commit message to a temp file and return its path. */
 function writeCommitMsgFile(msg: string): string {
     const tmpFile = path.join(os.tmpdir(), `uv-commit-${Date.now()}.txt`);
@@ -328,7 +423,32 @@ async function mergeRemoteBranch(
     const run = createGitRunner(projectPath);
     const notes: string[] = [];
 
-    await run(`git fetch --quiet origin ${branch}`);
+    // Fetch with auto-redirect on "Repository moved" (up to 3 attempts)
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await withTransientRetry(
+                () => run(`git fetch --quiet origin ${branch}`),
+                'fetch'
+            );
+            break;
+        } catch (fetchErr: any) {
+            const stderr = fetchErr?.stderr ?? '';
+            const moved = parseMovedRepository(stderr);
+            if (moved) {
+                const newUrl = await rewriteOriginRemote(projectPath, moved, run);
+                console.log(`[Ultraview] origin redirected to ${newUrl} during fetch`);
+                continue;
+            }
+            // Also catch non-stderr message form (some git builds put it in stdout)
+            const movedStdout = parseMovedRepository(fetchErr?.stdout ?? '');
+            if (movedStdout) {
+                const newUrl = await rewriteOriginRemote(projectPath, movedStdout, run);
+                console.log(`[Ultraview] origin redirected to ${newUrl} during fetch`);
+                continue;
+            }
+            throw fetchErr;
+        }
+    }
 
     try {
         const { stdout, stderr } = await run(`git merge --no-edit -X ${strategy} origin/${branch}`);
@@ -427,11 +547,27 @@ async function getProjectGitStatus(projectPath: string): Promise<GitStatus> {
         /* ignore */
     }
 
-    try {
-        // Fetch remote silently to compare ahead/behind
-        await run('git fetch --quiet');
-    } catch {
-        /* offline or no remote */
+    // Fetch (with redirect-on-moved + transient retry) so the ahead/behind
+    // badge reflects the *real* remote state and never gets stuck on stale
+    // local refs. Quiet on success; soft-fail on outage so the badge still
+    // shows whatever the last good fetch recorded.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await withTransientRetry(
+                () => run('git fetch --quiet --prune --tags origin'),
+                'status-fetch'
+            );
+            break;
+        } catch (fetchErr: any) {
+            const stderr = fetchErr?.stderr ?? '';
+            const stdout = fetchErr?.stdout ?? '';
+            const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
+            if (moved) {
+                await rewriteOriginRemote(projectPath, moved, run);
+                continue;
+            }
+            break;
+        }
     }
 
     try {
@@ -768,22 +904,39 @@ async function recoverFromWorkflowScope(
     // Step 3: rewrite ALL of HEAD's history. Required because the workflow
     // file may be in any ancestor commit, not just HEAD, and the server
     // rejects any push containing a workflow change.
+    const filterRun = createGitRunner(projectPath, 300000); // 5 min
     try {
-        const filterRun = createGitRunner(projectPath, 300000); // 5 min
         await filterRun(
             'git filter-branch -f --index-filter ' +
             '"git rm -rf --cached --ignore-unmatch .github/workflows" HEAD'
         );
-        // Step 4: clean up backup refs filter-branch leaves in refs/original/
-        try {
-            await filterRun(
-                'git for-each-ref --format="%(refname)" refs/original/ | ' +
-                'xargs -n 1 git update-ref -d'
-            );
-        } catch { /* nothing to clean */ }
     } catch {
-        return false;
+        // filter-branch may be deprecated on newer git — fall back to a
+        // simple rm from HEAD plus a tag-based re-strip. We do this even
+        // after a partial filter-branch so the visible state is clean.
+        try {
+            await filterRun('git rm -rf --cached --ignore-unmatch .github/workflows');
+            await filterRun('git commit --amend --no-edit');
+        } catch {
+            return false;
+        }
     }
+
+    // Step 4: clean up backup refs filter-branch leaves in refs/original/.
+    // We can't pipe through `xargs` (no shell in execFile) and `xargs` is not
+    // present on stock Windows, so iterate with a Node loop instead.
+    try {
+        const { stdout: refsOut } = await filterRun('git for-each-ref --format=%(refname) refs/original/');
+        const refs = refsOut.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        for (const ref of refs) {
+            await filterRun(`git update-ref -d "${ref}"`);
+        }
+    } catch { /* nothing to clean */ }
+    // Aggressively expire reflog and gc so no workflow blob survives in
+    // the repository's object store — this is what the server actually
+    // scans when it rejects a push.
+    try { await filterRun('git reflog expire --expire=now --all'); } catch { /* ignore */ }
+    try { await filterRun('git gc --prune=now --aggressive'); } catch { /* ignore */ }
 
     return true;
 }
@@ -791,23 +944,81 @@ async function recoverFromWorkflowScope(
 async function gitPush(projectPath: string, commitMsg?: string): Promise<string> {
     const run = createGitRunner(projectPath);
     const branch = await getCurrentBranch(projectPath);
-    try {
-        await gitCommitLocal(projectPath, commitMsg);
-        const { stdout, stderr } = await run(`git push -u origin ${branch}`);
-        return trimGitOutput(stdout, stderr) || 'Push complete';
-    } catch (err: any) {
-        const errMsg = formatGitError(err);
-        // Token lacks `workflow` scope — rewrite local history to strip
-        // .github/workflows, then force-push. Local files on disk stay.
-        if (/workflow/i.test(errMsg) && /scope/i.test(errMsg)) {
-            if (await recoverFromWorkflowScope(projectPath, run)) {
-                const { stdout, stderr } = await run(`git push --force-with-lease -u origin ${branch}`);
-                const base = trimGitOutput(stdout, stderr) || 'Push complete';
-                return `${base} — .github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)`;
+    await gitCommitLocal(projectPath, commitMsg);
+
+    // Try up to 4 times. Each iteration can either:
+    //   1. Succeed (push lands)
+    //   2. Hit a transient error → withTransientRetry retries with backoff
+    //   3. Hit "Repository moved" → we rewrite origin and the next loop iteration
+    //      uses the new URL automatically
+    //   4. Hit "workflow scope" → we strip .github/workflows and force-push
+    //   5. Anything else → propagate after exhausting redirects
+    let lastErr: any;
+    let workflowFilesExcluded = false;
+    let redirectedFrom: string | undefined;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+        try {
+            const { stdout, stderr } = await withTransientRetry(
+                () => run(`git push -u origin ${branch}`),
+                'push'
+            );
+            const base = trimGitOutput(stdout, stderr) || 'Push complete';
+            const parts: string[] = [];
+            if (redirectedFrom) parts.push(`remote was at ${redirectedFrom}, now using ${(await getRemoteUrl(projectPath)) ?? 'new URL'}`);
+            if (workflowFilesExcluded) parts.push('.github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)');
+            return parts.length ? `${base} — ${parts.join(' | ')}` : base;
+        } catch (err: any) {
+            lastErr = err;
+            const errMsg = formatGitError(err);
+            const stderr = err?.stderr ?? '';
+            const stdout = err?.stdout ?? '';
+
+            // 1. Repository moved → update origin, retry on next iteration
+            const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
+            if (moved) {
+                if (!redirectedFrom) {
+                    try {
+                        redirectedFrom = (await run('git remote get-url origin')).stdout.trim();
+                    } catch { /* ignore */ }
+                }
+                const newUrl = await rewriteOriginRemote(projectPath, moved, run);
+                console.log(`[Ultraview] origin redirected to ${newUrl}`);
+                continue;
             }
+
+            // 2. Workflow scope → strip .github/workflows and force-push
+            if (/workflow/i.test(errMsg) && /scope/i.test(errMsg)) {
+                if (await recoverFromWorkflowScope(projectPath, run)) {
+                    workflowFilesExcluded = true;
+                    try {
+                        const { stdout, stderr } = await withTransientRetry(
+                            () => run(`git push --force-with-lease -u origin ${branch}`),
+                            'push-force'
+                        );
+                        const base = trimGitOutput(stdout, stderr) || 'Push complete';
+                        return `${base} — .github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)`;
+                    } catch (retryErr: any) {
+                        // If the post-recovery push hits "moved" (e.g. a
+                        // redirect that we hadn't seen yet), loop back to
+                        // the top so the redirect handler can fix origin
+                        // first and then we push again.
+                        const rStderr = retryErr?.stderr ?? '';
+                        const rStdout = retryErr?.stdout ?? '';
+                        if (parseMovedRepository(rStderr) || parseMovedRepository(rStdout)) {
+                            lastErr = retryErr;
+                            continue;
+                        }
+                        throw retryErr;
+                    }
+                }
+            }
+
+            // 3. Any other error → bail out
+            throw new Error(errMsg);
         }
-        throw new Error(errMsg);
     }
+    // Should not reach here, but if we do, surface the last error
+    throw new Error(formatGitError(lastErr) || 'Push failed after retries');
 }
 
 interface SyncResult {
@@ -820,10 +1031,28 @@ async function getSyncDirection(
 ): Promise<{ ahead: number; behind: number; diverged: boolean }> {
     const run = createGitRunner(projectPath, 10000);
 
-    try {
-        await run('git fetch --quiet origin');
-    } catch {
-        /* fetch failed, try with whatever we have */
+    // Fetch with auto-redirect on "Repository moved" so a stale local origin
+    // never blocks the status check (and so the badge reflects the real
+    // remote state, not whatever the local ref cache remembers).
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            await withTransientRetry(
+                () => run('git fetch --quiet --prune --tags origin'),
+                'fetch'
+            );
+            break;
+        } catch (fetchErr: any) {
+            const stderr = fetchErr?.stderr ?? '';
+            const stdout = fetchErr?.stdout ?? '';
+            const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
+            if (moved) {
+                await rewriteOriginRemote(projectPath, moved, run);
+                continue;
+            }
+            // Soft-fail: keep going with whatever refs we already have so a
+            // temporary outage doesn't blank the badge.
+            break;
+        }
     }
 
     try {
@@ -990,6 +1219,23 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
         }
     }
 
+    // ── pre-flight: probe the remote for redirects BEFORE doing any work ────
+    // A redirect discovered here (e.g. UnrealSync → /Vizualflow/UnrealSync)
+    // is fixed up-front so every subsequent fetch/pull/push uses the new
+    // location and we never surface a confusing "moved" error mid-flow.
+    try {
+        const { stdout, stderr } = await run('git ls-remote --heads origin HEAD');
+        const combined = `${stdout || ''}\n${stderr || ''}`;
+        const moved = parseMovedRepository(combined);
+        if (moved) {
+            const newUrl = await rewriteOriginRemote(projectPath, moved, run);
+            console.log(`[Ultraview] pre-flight: origin redirected to ${newUrl}`);
+        }
+    } catch {
+        /* offline / no remote yet — fall through, the per-step recovery will
+           handle the moved hint if it appears later */
+    }
+
     // ── fetch + compute divergence ───────────────────────────────────────────
     let ahead = 0;
     let behind = 0;
@@ -1048,35 +1294,102 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     }
 
     // ── push ─────────────────────────────────────────────────────────────────
+    // Robust push loop that handles, in order:
+    //   1. "Repository moved" → update origin, retry
+    //   2. Transient errors  → withTransientRetry handles backoff
+    //   3. "non-fast-forward"→ pull + retry (one pass)
+    //   4. "workflow scope"   → strip .github/workflows + force-push
+    //   5. Anything else     → bubble up after exhausting redirects/recoveries
     let workflowFilesExcluded = false;
-    try {
-        await run(`git push -u origin ${branch}`);
-    } catch (pushErr: any) {
-        const stderr = pushErr?.stderr ?? '';
-        if (/rejected|non-fast-forward/i.test(stderr)) {
-            // Remote advanced while we were working — pull then retry
-            await run(`git pull --no-edit -X ours origin ${branch}`);
-            await run(`git push -u origin ${branch}`);
-        } else if (/workflow/i.test(stderr) && /scope/i.test(stderr)) {
-            // Token lacks `workflow` scope — rewrite local history to strip
-            // .github/workflows from every commit, then force-push. Local
-            // files on disk stay. User can re-auth later to push workflow
-            // files properly.
-            if (await recoverFromWorkflowScope(projectPath, run)) {
-                await run(`git push --force-with-lease -u origin ${branch}`);
-                workflowFilesExcluded = true;
-            } else {
-                throw pushErr;
+    let pushAttempts = 0;
+    let pushDone = false;
+    let lastPushErr: any;
+    let redirectedDuringPush = false;
+    while (!pushDone && pushAttempts < 4) {
+        pushAttempts++;
+        try {
+            await withTransientRetry(
+                () => run(`git push -u origin ${branch}`),
+                'sync-push'
+            );
+            pushDone = true;
+        } catch (pushErr: any) {
+            lastPushErr = pushErr;
+            const stderr = pushErr?.stderr ?? '';
+            const stdout = pushErr?.stdout ?? '';
+            const errMsg = formatGitError(pushErr);
+
+            // 1. Repository moved → fix origin, loop and retry push
+            const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
+            if (moved) {
+                const newUrl = await rewriteOriginRemote(projectPath, moved, run);
+                redirectedDuringPush = true;
+                console.log(`[Ultraview] origin redirected to ${newUrl}`);
+                continue;
             }
-        } else {
+
+            // 2. Non-fast-forward → pull then retry
+            if (/rejected|non-fast-forward/i.test(stderr)) {
+                try {
+                    await run(`git pull --no-edit -X ours origin ${branch}`);
+                } catch {
+                    /* fall through to retry */
+                }
+                continue;
+            }
+
+            // 3. Workflow scope → strip and force-push
+            if (/workflow/i.test(errMsg) && /scope/i.test(errMsg)) {
+                if (await recoverFromWorkflowScope(projectPath, run)) {
+                    try {
+                        await withTransientRetry(
+                            () => run(`git push --force-with-lease -u origin ${branch}`),
+                            'sync-push-force'
+                        );
+                        workflowFilesExcluded = true;
+                        pushDone = true;
+                    } catch (forceErr: any) {
+                        // Force-push may itself surface a "moved" hint we
+                        // hadn't seen yet — loop back to the top so the
+                        // redirect handler can fix origin first.
+                        const fStderr = forceErr?.stderr ?? '';
+                        const fStdout = forceErr?.stdout ?? '';
+                        const fMoved = parseMovedRepository(fStderr) || parseMovedRepository(fStdout);
+                        if (fMoved) {
+                            lastPushErr = forceErr;
+                            const newUrl = await rewriteOriginRemote(projectPath, fMoved, run);
+                            redirectedDuringPush = true;
+                            console.log(`[Ultraview] origin redirected to ${newUrl} after force-push`);
+                            continue;
+                        }
+                        throw forceErr;
+                    }
+                } else {
+                    throw pushErr;
+                }
+                continue;
+            }
+
+            // 4. Anything else → bubble up
             throw pushErr;
         }
     }
+    if (!pushDone) {
+        throw lastPushErr ?? new Error('Push failed after retries');
+    }
 
     // ── result summary ───────────────────────────────────────────────────────
-    const note = workflowFilesExcluded
-        ? ' — .github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)'
-        : '';
+    const noteParts: string[] = [];
+    if (workflowFilesExcluded) {
+        noteParts.push('.github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)');
+    }
+    if (redirectedDuringPush) {
+        try {
+            const current = (await run('git remote get-url origin')).stdout.trim().replace(/https:\/\/[^@]+@/, 'https://');
+            noteParts.push(`remote updated to ${current}`);
+        } catch { /* ignore */ }
+    }
+    const note = noteParts.length ? ` — ${noteParts.join(' | ')}` : '';
     if (committed && (behind > 0 || diverged)) return `Synced changes${note}`;
     if (committed) return `Changes pushed${note}`;
     if (behind > 0 || diverged) return `Updated from remote${note}`;
@@ -1559,8 +1872,23 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     const accountId = msg.accountId;
                     const account = this.accounts.getAccount(accountId);
                     if (!account) break;
+                    const supportsBrowser =
+                        account.provider === 'github' ||
+                        account.provider === 'gitlab' ||
+                        account.provider === 'azure';
                     const option = await vscode.window.showQuickPick(
                         [
+                            ...(supportsBrowser
+                                ? [
+                                    {
+                                        label: '$(refresh) Re-authenticate via Browser',
+                                        description:
+                                            account.authMethod === 'oauth'
+                                                ? 'Refresh OAuth token (adds new scopes like workflow)'
+                                                : 'Switch to browser OAuth sign-in',
+                                    },
+                                ]
+                                : []),
                             {
                                 label: '$(key) Manage SSH Key',
                                 description: 'Generate and configure SSH key',
@@ -1572,7 +1900,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         ],
                         { placeHolder: `Manage Auth for ${account.username}` }
                     );
-                    if (option?.label.includes('SSH')) {
+                    if (option?.label.includes('Re-authenticate')) {
+                        await this._reAuthOAuth(accountId, account.provider);
+                        this.postState();
+                    } else if (option?.label.includes('SSH')) {
                         await GitProvider._handleGenerateSshKey(
                             accountId,
                             this.view?.webview,
@@ -2593,7 +2924,11 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     if (authMethod.label === 'browser') {
                         const vsCodeProviderId = browserProviders[provider.label];
                         const scopes: Record<string, string[]> = {
-                            github: ['repo', 'read:user', 'user:email'],
+                            // Include 'workflow' on GitHub so the new account
+                            // can push workflow files right away — no need
+                            // to re-authenticate again when the user first
+                            // tries to sync a repo that has .github/workflows.
+                            github: ['repo', 'workflow', 'read:user', 'user:email'],
                             gitlab: ['read_user', 'api'],
                             microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default'],
                         };
@@ -2805,8 +3140,23 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     const accountId = msg.accountId;
                     const account = accounts.getAccount(accountId);
                     if (!account) break;
+                    const supportsBrowser =
+                        account.provider === 'github' ||
+                        account.provider === 'gitlab' ||
+                        account.provider === 'azure';
                     const option = await vscode.window.showQuickPick(
                         [
+                            ...(supportsBrowser
+                                ? [
+                                    {
+                                        label: '$(refresh) Re-authenticate via Browser',
+                                        description:
+                                            account.authMethod === 'oauth'
+                                                ? 'Refresh OAuth token (adds new scopes like workflow)'
+                                                : 'Switch to browser OAuth sign-in',
+                                    },
+                                ]
+                                : []),
                             {
                                 label: '$(key) Manage SSH Key',
                                 description: 'Generate and configure SSH key',
@@ -2818,7 +3168,43 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         ],
                         { placeHolder: `Manage Auth for ${account.username}` }
                     );
-                    if (option?.label.includes('SSH')) {
+                    if (option?.label.includes('Re-authenticate')) {
+                        // Run the same OAuth flow the standalone reAuthAccount
+                        // handler uses, but with the FULL scope set (incl.
+                        // 'workflow' on GitHub) so the new token can actually
+                        // push workflow files. Mirrors GitProvider._reAuthOAuth.
+                        const browserProviders: Record<string, string> = {
+                            github: 'github',
+                            gitlab: 'gitlab',
+                            azure: 'microsoft',
+                        };
+                        const vsCodeProviderId = browserProviders[account.provider];
+                        const scopes: Record<string, string[]> = {
+                            github: ['repo', 'workflow', 'read:user', 'user:email'],
+                            gitlab: ['read_user', 'api'],
+                            microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default'],
+                        };
+                        try {
+                            const session = await vscode.authentication.getSession(
+                                vsCodeProviderId,
+                                scopes[vsCodeProviderId] || [],
+                                { forceNewSession: true }
+                            );
+                            accounts.updateAccount(accountId, {
+                                token: session.accessToken,
+                                lastValidatedAt: Date.now(),
+                                authMethod: 'oauth',
+                            });
+                            vscode.window.showInformationMessage(
+                                `✓ Re-authenticated successfully with full scopes.`
+                            );
+                            postPanelState();
+                        } catch (err: any) {
+                            vscode.window.showErrorMessage(
+                                `Re-auth failed: ${err?.message ?? String(err)}`
+                            );
+                        }
+                    } else if (option?.label.includes('SSH')) {
                         await GitProvider._handleGenerateSshKey(
                             accountId,
                             panel.webview,
@@ -2841,7 +3227,11 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     };
                     const vsCodeProviderId = browserProviders[account.provider];
                     const scopes: Record<string, string[]> = {
-                        github: ['repo', 'read:user', 'user:email'],
+                        // Include 'workflow' on GitHub so the fresh token can
+                        // actually push workflow files (and the user doesn't
+                        // get hit by the "refusing workflow scope" error
+                        // again immediately after re-authenticating).
+                        github: ['repo', 'workflow', 'read:user', 'user:email'],
                         gitlab: ['read_user', 'api'],
                         microsoft: ['499b84ac-1321-427f-aa17-267ca6975798/.default'],
                     };
@@ -3048,13 +3438,20 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 try {
                     const session = await vscode.authentication.getSession(
                         'github',
-                        ['repo', 'read:user', 'user:email'],
+                        // Include 'workflow' so the new token can push
+                        // workflow files immediately, no follow-up
+                        // re-auth needed.
+                        ['repo', 'workflow', 'read:user', 'user:email'],
                         { forceNewSession: true }
                     );
-                    activeAccs.updateAccount(accountId, { token: session.accessToken });
+                    activeAccs.updateAccount(accountId, {
+                        token: session.accessToken,
+                        authMethod: 'oauth',
+                        lastValidatedAt: Date.now(),
+                    });
                     webview?.postMessage({ type: 'accountUpdated', accountId });
                     vscode.window.showInformationMessage(
-                        `Token updated for ${acct.username} via GitHub OAuth.`
+                        `Token updated for ${acct.username} via GitHub OAuth (full scopes).`
                     );
                 } catch (err: any) {
                     vscode.window.showErrorMessage(`OAuth failed: ${err?.message ?? String(err)}`);
@@ -3064,7 +3461,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
 
         const token = await vscode.window.showInputBox({
-            prompt: 'Enter personal access token (with repo scope)',
+            prompt: 'Enter personal access token (with repo + workflow scope)',
             password: true,
         });
         if (token) {
