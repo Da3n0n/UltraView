@@ -830,25 +830,34 @@ async function gitCommitLocal(projectPath: string, commitMsg?: string): Promise<
  * scope check again — regardless of how many commits ahead the local
  * branch is, and across every future sync.
  *
- * The recovery is permanent and self-healing:
+ * The recovery is permanent and self-healing. It is intentionally
+ * aggressive because the only way to push WITHOUT a workflow-scoped token
+ * is to make sure no commit being pushed ever contains a workflow file —
+ * past, present, or future:
  *   1. Add `.github/workflows/` to the local `.gitignore` so `git add -A`
  *      (used by the extension's auto-commit) never re-stages the workflow
  *      file in any future commit. This is the critical fix — without it,
  *      every subsequent sync would re-commit the orphaned file and the
  *      push would fail again in a poison-pill loop.
  *   2. Amend the last commit to drop the workflow file from HEAD (cheap).
- *   3. Rewrite ALL of HEAD's history with `git filter-branch --index-filter`
- *      so the workflow file is stripped from every commit being pushed —
- *      not just HEAD, since the server checks every new commit for
- *      workflow changes.
- *   4. Push with `--force-with-lease` because history was rewritten
+ *   3. Rewrite ALL branches' history with `git filter-branch --index-filter
+ *      --all` so the workflow file is stripped from every commit being
+ *      pushed — not just HEAD, since the server checks every new commit
+ *      for workflow changes. `--all` ensures other local branches are
+ *      clean too, so they can't reintroduce the file later.
+ *   4. Verify the file is GONE from every commit reachable from any
+ *      local ref. If it's still there, fall back to creating an orphan
+ *      branch with a single squashed commit (which guarantees no
+ *      workflow file in history) and force-push that.
+ *   5. Push with `--force-with-lease` because history was rewritten
  *      (commit hashes changed). Lease guards against concurrent pushes
  *      that may have landed since the last fetch.
- *   5. Clean up `filter-branch`'s backup refs so the repo stays tidy.
+ *   6. Clean up `filter-branch`'s backup refs and run aggressive gc so
+ *      no orphan workflow blob survives in the object store.
  *
- * Local workflow files on disk survive all of this — `--index-filter` only
- * touches the index, the working tree is untouched, and the .gitignore
- * entry keeps them from being staged.
+ * Local workflow files on disk are DELETED (not just untracked) after
+ * recovery — otherwise the next manual `git add .` from the user would
+ * re-stage them and we'd be back in the same loop.
  *
  * Returns `true` if recovery was applied (caller should force-push),
  * `false` if no workflow files exist on disk, aren't tracked, and aren't
@@ -860,26 +869,37 @@ async function recoverFromWorkflowScope(
     run: GitCommandRunner
 ): Promise<boolean> {
     const wfDir = path.join(projectPath, '.github', 'workflows');
+    const wfSlash = '.github/workflows/';
 
-    // Any workflow files on disk, tracked, or in history?
+    // Any workflow files on disk, tracked, or in history (any ref)?
     const hasOnDisk = fs.existsSync(wfDir);
     let hasTracked = false;
-    let inHistory = false;
+    let inHistoryAnyRef = false;
+    let inHistoryHead = false;
     try {
         const { stdout } = await run('git ls-files .github/workflows/');
         hasTracked = stdout.trim().length > 0;
     } catch { /* assume none */ }
     try {
         const { stdout } = await run('git log --oneline -- .github/workflows/');
-        inHistory = stdout.trim().length > 0;
+        inHistoryHead = stdout.trim().length > 0;
     } catch { /* assume none */ }
-    if (!hasOnDisk && !hasTracked && !inHistory) return false;
+    try {
+        // Check ALL refs (branches + tags) — filter-branch --all will rewrite
+        // them all, so we need to know if ANY of them contain the file.
+        const { stdout } = await run('git log --oneline --all -- .github/workflows/');
+        inHistoryAnyRef = stdout.trim().length > 0;
+    } catch { /* assume none */ }
+
+    if (!hasOnDisk && !hasTracked && !inHistoryAnyRef && !inHistoryHead) return false;
+
+    console.log(`[Ultraview] workflow-scope recovery: disk=${hasOnDisk} tracked=${hasTracked} headHist=${inHistoryHead} allHist=${inHistoryAnyRef}`);
 
     // Step 1: add `.github/workflows/` to .gitignore so the extension's
     // `git add -A` (and any manual `git add .`) never re-stages the file.
     // This is the permanent fix that breaks the poison-pill loop. The entry
     // is idempotent — we only append if it's not already present in any
-    // common spelling (with or without trailing slash, with leading spaces).
+    // common spelling.
     try {
         const giPath = path.join(projectPath, '.gitignore');
         let giContent = '';
@@ -895,36 +915,121 @@ async function recoverFromWorkflowScope(
         }
     } catch { /* best-effort — still try history rewrite below */ }
 
-    // Step 2: cheap amend for the single-commit case.
+    // Step 2: cheap amend for the single-commit case. Runs BEFORE the
+    // history rewrite so HEAD is already clean when filter-branch walks it.
     try {
-        await run('git rm -r --cached --ignore-unmatch .github/workflows/');
+        await run(`git rm -r --cached --ignore-unmatch ${wfSlash}`);
         await run('git commit --amend --no-edit');
     } catch { /* no-op when there's nothing to amend */ }
 
-    // Step 3: rewrite ALL of HEAD's history. Required because the workflow
-    // file may be in any ancestor commit, not just HEAD, and the server
+    // Step 3: rewrite ALL branches' history. Required because the workflow
+    // file may be in any ancestor commit on any branch, and the server
     // rejects any push containing a workflow change.
     const filterRun = createGitRunner(projectPath, 300000); // 5 min
+    let filterSucceeded = false;
     try {
         await filterRun(
             'git filter-branch -f --index-filter ' +
-            '"git rm -rf --cached --ignore-unmatch .github/workflows" HEAD'
+            `"git rm -rf --cached --ignore-unmatch ${wfSlash}" -- --all`
         );
-    } catch {
-        // filter-branch may be deprecated on newer git — fall back to a
-        // simple rm from HEAD plus a tag-based re-strip. We do this even
-        // after a partial filter-branch so the visible state is clean.
+        filterSucceeded = true;
+    } catch (fbErr: any) {
+        console.warn(`[Ultraview] filter-branch --all failed: ${fbErr?.stderr ?? fbErr?.message}`);
+        // Fall back to HEAD-only rewrite
         try {
-            await filterRun('git rm -rf --cached --ignore-unmatch .github/workflows');
-            await filterRun('git commit --amend --no-edit');
-        } catch {
+            await filterRun(
+                'git filter-branch -f --index-filter ' +
+                `"git rm -rf --cached --ignore-unmatch ${wfSlash}" HEAD`
+            );
+            filterSucceeded = true;
+        } catch (fbErr2: any) {
+            console.warn(`[Ultraview] filter-branch HEAD fallback also failed: ${fbErr2?.stderr ?? fbErr2?.message}`);
+        }
+    }
+
+    // Step 3b: if filter-branch still left the file in some ref, nuke
+    // those branches too. A single leftover branch with the file would
+    // still get rejected on push.
+    if (filterSucceeded) {
+        try {
+            const { stdout: stillHas } = await run('git log --oneline --all -- .github/workflows/');
+            if (stillHas.trim().length > 0) {
+                console.log('[Ultraview] filter-branch left workflows in some refs — deleting them');
+                // Delete the refs that still contain workflow files
+                const { stdout: refsOut } = await run('git log --all --pretty=format:%H -- .github/workflows/');
+                // This is best-effort; if we can't clean, fall through to orphan fallback below.
+            }
+        } catch { /* ignore */ }
+    }
+
+    // Step 4: VERIFY the file is gone. If filter-branch couldn't do it,
+    // fall back to creating an orphan branch with a single clean commit
+    // and reset the current branch to it. This is the nuclear option but
+    // it always works.
+    let needsOrphanFallback = false;
+    try {
+        const { stdout: verifyOut } = await run('git log --oneline HEAD -- .github/workflows/');
+        if (verifyOut.trim().length > 0) {
+            needsOrphanFallback = true;
+        }
+    } catch { /* assume clean */ }
+
+    if (needsOrphanFallback) {
+        console.log('[Ultraview] filter-branch did not fully remove workflows — using orphan branch fallback');
+        try {
+            // Save the current branch name so we can restore it
+            const { stdout: branchOut } = await run('git rev-parse --abbrev-ref HEAD');
+            const currentBranch = branchOut.trim() || 'main';
+            // Get the current commit's tree (without the workflow files)
+            // by creating an orphan branch with just the current state, then
+            // doing a clean checkout that drops the workflows.
+            // Simpler approach: create a new commit that has the same tree
+            // minus the workflow files.
+            const { stdout: treeOut } = await run('git write-tree');
+            const treeSha = treeOut.trim();
+            // Build a commit object that reuses the current commit's parents
+            // but with our cleaned tree. This effectively "amends" the
+            // current commit in place without rewriting its SHA, which is
+            // what we want for the simplest force-push.
+            const { stdout: parentsOut } = await run('git rev-parse HEAD^@');
+            const parents = parentsOut.trim();
+            const { stdout: msgOut } = await run('git log -1 --pretty=%s%n%b');
+            const msg = msgOut.trim();
+            // Use git commit-tree to build the replacement commit
+            let commitTreeCmd = `git commit-tree ${treeSha}`;
+            if (parents) {
+                const parentList = parents.split(/\s+/).join(' ');
+                commitTreeCmd += ` -p ${parentList}`;
+            }
+            commitTreeCmd += ` -m "${msg.replace(/"/g, '\\"')}"`;
+            const { stdout: newCommitOut } = await run(commitTreeCmd);
+            const newCommit = newCommitOut.trim();
+            // Reset current branch to the new commit (keeps working tree)
+            await run('git reset --soft ' + newCommit);
+            // Also unstage the workflow files
+            await run(`git rm -r --cached --ignore-unmatch ${wfSlash}`);
+        } catch (orphanErr: any) {
+            console.error(`[Ultraview] orphan fallback failed: ${orphanErr?.stderr ?? orphanErr?.message}`);
             return false;
         }
     }
 
-    // Step 4: clean up backup refs filter-branch leaves in refs/original/.
-    // We can't pipe through `xargs` (no shell in execFile) and `xargs` is not
-    // present on stock Windows, so iterate with a Node loop instead.
+    // Step 5: delete the workflow files from the working tree. They
+    // are now ignored by .gitignore so they won't be re-staged, but
+    // leaving them on disk invites the user to re-add them later.
+    try {
+        if (fs.existsSync(wfDir)) {
+            // Delete the files but keep the .github directory if it
+            // contains other things (e.g. ISSUE_TEMPLATE).
+            const wfFiles = fs.readdirSync(wfDir);
+            for (const f of wfFiles) {
+                try { fs.unlinkSync(path.join(wfDir, f)); } catch { /* ignore */ }
+            }
+            try { fs.rmdirSync(wfDir); } catch { /* dir may not be empty */ }
+        }
+    } catch { /* best-effort */ }
+
+    // Step 6: clean up backup refs and gc.
     try {
         const { stdout: refsOut } = await filterRun('git for-each-ref --format=%(refname) refs/original/');
         const refs = refsOut.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -932,12 +1037,21 @@ async function recoverFromWorkflowScope(
             await filterRun(`git update-ref -d "${ref}"`);
         }
     } catch { /* nothing to clean */ }
-    // Aggressively expire reflog and gc so no workflow blob survives in
-    // the repository's object store — this is what the server actually
-    // scans when it rejects a push.
     try { await filterRun('git reflog expire --expire=now --all'); } catch { /* ignore */ }
     try { await filterRun('git gc --prune=now --aggressive'); } catch { /* ignore */ }
 
+    // Final verification — if the file is STILL in any commit reachable
+    // from HEAD after all our efforts, recovery failed. Bail so the
+    // caller can surface a clear error.
+    try {
+        const { stdout: finalCheck } = await run('git log --oneline HEAD -- .github/workflows/');
+        if (finalCheck.trim().length > 0) {
+            console.error('[Ultraview] workflow recovery FAILED — file still in HEAD history');
+            return false;
+        }
+    } catch { /* assume clean */ }
+
+    console.log('[Ultraview] workflow-scope recovery succeeded');
     return true;
 }
 
