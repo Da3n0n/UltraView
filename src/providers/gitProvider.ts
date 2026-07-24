@@ -1055,6 +1055,99 @@ async function recoverFromWorkflowScope(
     return true;
 }
 
+/**
+ * Nuclear-option recovery for when filter-branch and the reset fallback
+ * both fail to remove workflow files from history. Creates a brand new
+ * branch with a single squashed commit containing only the current
+ * working tree (with all workflow files excluded), then force-pushes
+ * that branch to origin. The remote repo ends up with a single commit
+ * that has no workflow files, so future pushes can never trip the
+ * scope check.
+ *
+ * Returns `true` if the rebuild + push succeeded, `false` otherwise.
+ * The caller is expected to re-run sync/push after a successful rebuild.
+ */
+async function nukeAndRebuild(projectPath: string): Promise<boolean> {
+    const run = createGitRunner(projectPath, 300000);
+    try {
+        // 1. Make sure .github/workflows/ is in .gitignore
+        const giPath = path.join(projectPath, '.gitignore');
+        let giContent = '';
+        try { giContent = fs.readFileSync(giPath, 'utf8'); } catch { /* fresh */ }
+        if (!/^[ \t]*\.github[\\\/]workflows[\\\/]?[ \t]*$/m.test(giContent)) {
+            const sep = giContent && !giContent.endsWith('\n') ? '\n' : '';
+            fs.writeFileSync(
+                giPath,
+                giContent + `${sep}# Ultraview auto-strip — workflow files cannot be pushed with OAuth token\n.github/workflows/\n`,
+                'utf8'
+            );
+        }
+
+        // 2. Delete workflow files from disk so they're never staged
+        const wfDir = path.join(projectPath, '.github', 'workflows');
+        if (fs.existsSync(wfDir)) {
+            for (const f of fs.readdirSync(wfDir)) {
+                try { fs.unlinkSync(path.join(wfDir, f)); } catch { /* ignore */ }
+            }
+            try { fs.rmdirSync(wfDir); } catch { /* dir may not be empty */ }
+        }
+
+        // 3. Get current branch
+        const { stdout: branchOut } = await run('git rev-parse --abbrev-ref HEAD');
+        const branch = branchOut.trim() || 'main';
+
+        // 4. Stash any uncommitted changes (other than workflow files)
+        let stashed = false;
+        try {
+            await run('git stash push -u -m "ultraview-nuke-rebuild"');
+            stashed = true;
+        } catch { /* nothing to stash */ }
+
+        // 5. Create a fresh orphan branch with just the current files
+        //    (no history at all — guaranteed no workflow files in past commits)
+        const tempBranch = `ultraview-rebuild-${Date.now()}`;
+        await run(`git checkout --orphan ${tempBranch}`);
+        // Remove anything from the index that may have been carried over
+        await run('git rm -rf --cached . 2>/dev/null || true');
+        // Stage everything from the working tree (.github/workflows/ is now
+        // ignored so it won't be included)
+        await run('git add -A');
+
+        // 6. Commit
+        try {
+            await run('git commit -m "Ultraview: initial commit (workflow files auto-stripped)"');
+        } catch (commitErr: any) {
+            // Nothing to commit? Just create an empty commit then.
+            await run('git commit --allow-empty -m "Ultraview: initial commit"');
+        }
+
+        // 7. Replace the original branch with this fresh one
+        await run(`git branch -D ${branch} 2>/dev/null || true`);
+        await run(`git branch -m ${branch}`);
+
+        // 8. Force-push the new branch
+        await withTransientRetry(
+            () => run(`git push --force-with-lease -u origin ${branch}`),
+            'nuke-push'
+        );
+
+        // 9. Restore any stashed changes
+        if (stashed) {
+            try {
+                await run('git stash pop');
+            } catch {
+                /* stash conflicts — user will resolve */
+            }
+        }
+
+        console.log(`[Ultraview] nukeAndRebuild: ${projectPath} → ${branch} successfully rebuilt`);
+        return true;
+    } catch (err: any) {
+        console.error(`[Ultraview] nukeAndRebuild failed: ${err?.stderr ?? err?.message}`);
+        return false;
+    }
+}
+
 async function gitPush(projectPath: string, commitMsg?: string): Promise<string> {
     const run = createGitRunner(projectPath);
     const branch = await getCurrentBranch(projectPath);
@@ -1406,6 +1499,26 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
             } catch { /* carry on to push regardless */ }
         }
     }
+
+    // ── pre-flight: strip workflow files BEFORE the first push attempt ───────
+    // This is the key change: instead of waiting for GitHub to reject the
+    // push with "refusing to allow OAuth App to create or update workflow",
+    // we detect workflow files in any local commit and strip them up-front.
+    // The push then succeeds on the first try and the user never sees an
+    // error. VS Code's built-in GitHub OAuth provider does NOT grant the
+    // 'workflow' scope, so this is the only way to keep syncing without
+    // requiring the user to switch to a PAT.
+    try {
+        const { stdout: wfCheck } = await run('git log -1 --name-only --pretty=format: HEAD');
+        if (wfCheck.split(/\r?\n/).some((p) => p.startsWith('.github/workflows/') && p.endsWith('.yml'))) {
+            console.log('[Ultraview] pre-flight: workflow file in HEAD, stripping...');
+            const stripped = await recoverFromWorkflowScope(projectPath, run);
+            if (stripped) {
+                workflowFilesExcluded = true;
+                console.log('[Ultraview] pre-flight: workflow files stripped from history');
+            }
+        }
+    } catch { /* best-effort pre-flight */ }
 
     // ── push ─────────────────────────────────────────────────────────────────
     // Robust push loop that handles, in order:
@@ -2104,21 +2217,41 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
                                     // Note: VS Code's built-in GitHub auth provider
                                     // does NOT honour the 'workflow' scope — only
-                                    // PATs can have it. The recovery above strips
-                                    // .github/workflows/ from history so the push
-                                    // can land without the scope. If we're here,
-                                    // the recovery was tried and failed.
+                                    // PATs can have it. Ultraview's pre-flight + recovery
+                                    // should have stripped .github/workflows/ from history
+                                    // automatically. If we're here, the user can force a
+                                    // full nuke-and-rebuild of the branch.
                                     vscode.window.showErrorMessage(
                                         `Push failed: GitHub OAuth tokens cannot have 'workflow' scope. ` +
-                                        `Add a Personal Access Token with workflow scope to keep the file, ` +
-                                        `or let Ultraview strip it from history automatically.`,
+                                        `Ultraview tried to strip the workflow file from history automatically ` +
+                                        `but something is still in the way. ` +
+                                        `Add a Personal Access Token to keep the file, or force a full rebuild.`,
                                         'Add PAT (workflow scope)',
+                                        'Force strip + rebuild',
                                         'Re-auth via Browser',
                                         'OK'
                                     ).then(async (action) => {
                                         if (action === 'Add PAT (workflow scope)') {
                                             await GitProvider._handleAddToken(acc.id, this.view?.webview, this.accounts);
                                             this.postState();
+                                        } else if (action === 'Force strip + rebuild') {
+                                            try {
+                                                const ok = await nukeAndRebuild(project.path);
+                                                if (ok) {
+                                                    const result = await gitPush(project.path, msg.commitMsg);
+                                                    vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
+                                                    this.store.write({ lastSyncAt: Date.now() });
+                                                    this.postState();
+                                                } else {
+                                                    vscode.window.showErrorMessage(
+                                                        `Could not rebuild ${project.name} branch — try adding a PAT instead.`
+                                                    );
+                                                }
+                                            } catch (nukeErr: any) {
+                                                vscode.window.showErrorMessage(
+                                                    `Force-strip failed: ${nukeErr?.message || 'Unknown error'}`
+                                                );
+                                            }
                                         } else if (action === 'Re-auth via Browser') {
                                             await this._reAuthOAuth(acc.id, acc.provider);
                                             this.postState();
@@ -2169,21 +2302,42 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
                                     // Note: VS Code's built-in GitHub auth provider
                                     // does NOT honour the 'workflow' scope — only
-                                    // PATs can have it. The recovery above strips
-                                    // .github/workflows/ from history so the push
-                                    // can land without the scope. If we're here,
-                                    // the recovery was tried and failed.
+                                    // PATs can have it. Ultraview's pre-flight + recovery
+                                    // should have stripped .github/workflows/ from history
+                                    // automatically. If we're here, the user can force a
+                                    // full nuke-and-rebuild of the branch.
                                     vscode.window.showErrorMessage(
                                         `Sync failed: GitHub OAuth tokens cannot have 'workflow' scope. ` +
-                                        `Add a Personal Access Token with workflow scope to keep the file, ` +
-                                        `or let Ultraview strip it from history automatically.`,
+                                        `Ultraview tried to strip the workflow file from history automatically ` +
+                                        `but something is still in the way. ` +
+                                        `Add a Personal Access Token to keep the file, or force a full rebuild.`,
                                         'Add PAT (workflow scope)',
+                                        'Force strip + rebuild',
                                         'Re-auth via Browser',
                                         'OK'
                                     ).then(async (action) => {
                                         if (action === 'Add PAT (workflow scope)') {
                                             await GitProvider._handleAddToken(acc.id, this.view?.webview, this.accounts);
                                             this.postState();
+                                        } else if (action === 'Force strip + rebuild') {
+                                            try {
+                                                const ok = await nukeAndRebuild(project.path);
+                                                if (ok) {
+                                                    // Retry the sync
+                                                    const result = await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
+                                                    vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
+                                                    this.store.write({ lastSyncAt: Date.now() });
+                                                    this.postState();
+                                                } else {
+                                                    vscode.window.showErrorMessage(
+                                                        `Could not rebuild ${project.name} branch — try adding a PAT instead.`
+                                                    );
+                                                }
+                                            } catch (nukeErr: any) {
+                                                vscode.window.showErrorMessage(
+                                                    `Force-strip failed: ${nukeErr?.message || 'Unknown error'}`
+                                                );
+                                            }
                                         } else if (action === 'Re-auth via Browser') {
                                             await this._reAuthOAuth(acc.id, acc.provider);
                                             this.postState();
