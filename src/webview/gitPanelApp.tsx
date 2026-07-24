@@ -540,6 +540,18 @@ function App() {
                                                 </button>
                                                 <button
                                                     className="mini-button"
+                                                    title="Refresh status (force fresh fetch + rev-list)"
+                                                    onClick={() =>
+                                                        getVscode()?.postMessage({
+                                                            type: 'refreshSingleProject',
+                                                            id: project.id,
+                                                        } satisfies GitPanelOutboundMessage)
+                                                    }
+                                                >
+                                                    ↻
+                                                </button>
+                                                <button
+                                                    className="mini-button"
                                                     onClick={() =>
                                                         getVscode()?.postMessage({
                                                             type: 'open',

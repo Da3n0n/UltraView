@@ -2108,6 +2108,9 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         }
                         // Notify other IDEs that a git operation completed
                         this.store.write({ lastSyncAt: Date.now() });
+                        // Invalidate cached status so the post-op badge reflects
+                        // the real remote state, not the pre-op cached one.
+                        delete this._cachedGitStatuses[project.id];
                         try {
                             await this._postSingleProjectState(project.id);
                         } finally {
@@ -2156,10 +2159,29 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         }
                         // Notify other IDEs that a git operation completed
                         this.store.write({ lastSyncAt: Date.now() });
+                        // Invalidate cached status so the post-op badge reflects
+                        // the real remote state, not the pre-op cached one.
+                        delete this._cachedGitStatuses[project.id];
                         try {
                             await this._postSingleProjectState(project.id);
                         } finally {
                             notifyGitOpDone(this.view?.webview, project.id);
+                        }
+                    }
+                    break;
+                }
+                case 'refreshSingleProject': {
+                    const project = this.manager.listProjects().find((p) => p.id === msg.id);
+                    if (project) {
+                        console.log(`[Ultraview] refreshSingleProject: ${project.name} (${project.path})`);
+                        // Invalidate the cached status so the next read returns
+                        // a fresh value, not whatever the last sync left behind.
+                        delete this._cachedGitStatuses[project.id];
+                        // Force a full re-fetch + rev-list
+                        try {
+                            await this._postSingleProjectState(project.id);
+                        } catch (e) {
+                            console.warn(`[Ultraview] refresh failed for ${project.name}:`, e);
                         }
                     }
                     break;
@@ -2216,8 +2238,13 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             );
                         }
                         this.store.write({ lastSyncAt: Date.now() });
+                        // Invalidate the cached status so the post-sync fetch
+                        // returns a fresh value, not whatever was in the cache
+                        // before the sync. This is what makes the badge clear
+                        // to "synced" instead of staying stuck on 1 ahead / 1
+                        // behind / 1 local.
+                        delete this._cachedGitStatuses[project.id];
                         try {
-                            await this._postLocalProjectState(project.id);
                             await this._postSingleProjectState(project.id);
                         } finally {
                             notifyGitOpDone(this.view?.webview, project.id);
@@ -3414,6 +3441,20 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         }
                     }
                     postPanelState();
+                    break;
+                }
+                case 'refreshSingleProject': {
+                    const project = manager.listProjects().find((p) => p.id === msg.id);
+                    if (project) {
+                        console.log(`[Ultraview] panel refreshSingleProject: ${project.name}`);
+                        // postPanelState always does a fresh fetch for all
+                        // projects, so this just kicks a re-render.
+                        try {
+                            await postPanelState();
+                        } catch (e) {
+                            console.warn(`[Ultraview] panel refresh failed for ${project.name}:`, e);
+                        }
+                    }
                     break;
                 }
                 case 'gitPull': {
