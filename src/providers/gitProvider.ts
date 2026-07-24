@@ -975,41 +975,41 @@ async function recoverFromWorkflowScope(
     } catch { /* assume clean */ }
 
     if (needsOrphanFallback) {
-        console.log('[Ultraview] filter-branch did not fully remove workflows — using orphan branch fallback');
+        console.log('[Ultraview] filter-branch did not fully remove workflows — using reset fallback');
         try {
-            // Save the current branch name so we can restore it
+            // Save the current branch and parent
             const { stdout: branchOut } = await run('git rev-parse --abbrev-ref HEAD');
             const currentBranch = branchOut.trim() || 'main';
-            // Get the current commit's tree (without the workflow files)
-            // by creating an orphan branch with just the current state, then
-            // doing a clean checkout that drops the workflows.
-            // Simpler approach: create a new commit that has the same tree
-            // minus the workflow files.
-            const { stdout: treeOut } = await run('git write-tree');
-            const treeSha = treeOut.trim();
-            // Build a commit object that reuses the current commit's parents
-            // but with our cleaned tree. This effectively "amends" the
-            // current commit in place without rewriting its SHA, which is
-            // what we want for the simplest force-push.
-            const { stdout: parentsOut } = await run('git rev-parse HEAD^@');
-            const parents = parentsOut.trim();
-            const { stdout: msgOut } = await run('git log -1 --pretty=%s%n%b');
-            const msg = msgOut.trim();
-            // Use git commit-tree to build the replacement commit
-            let commitTreeCmd = `git commit-tree ${treeSha}`;
-            if (parents) {
-                const parentList = parents.split(/\s+/).join(' ');
-                commitTreeCmd += ` -p ${parentList}`;
+            // Find the first parent of HEAD (the commit BEFORE the workflow
+            // was added, if such a commit exists). We rewrite HEAD so that
+            // its tree matches the parent's tree but with our current
+            // uncommitted changes re-applied.
+            const { stdout: parentOut } = await run('git rev-parse HEAD~1');
+            const parent = parentOut.trim();
+            if (parent) {
+                // Reset to the parent (soft, keeps index/working tree),
+                // then remove workflows from index, then re-commit.
+                await run(`git reset --soft ${parent}`);
+                await run(`git rm -r --cached --ignore-unmatch ${wfSlash}`);
+                // Stage any other pending changes and commit
+                await run('git add -A');
+                await run('git commit --no-edit -m "Sync commit"');
+            } else {
+                // HEAD has no parent (initial commit with workflows).
+                // Delete the workflows from the working tree and the index
+                // and recommit as a single clean commit.
+                if (fs.existsSync(wfDir)) {
+                    const wfFiles = fs.readdirSync(wfDir);
+                    for (const f of wfFiles) {
+                        try { fs.unlinkSync(path.join(wfDir, f)); } catch { /* ignore */ }
+                    }
+                }
+                await run(`git rm -r --cached --ignore-unmatch ${wfSlash}`);
+                await run('git add -A');
+                await run('git commit --amend --no-edit');
             }
-            commitTreeCmd += ` -m "${msg.replace(/"/g, '\\"')}"`;
-            const { stdout: newCommitOut } = await run(commitTreeCmd);
-            const newCommit = newCommitOut.trim();
-            // Reset current branch to the new commit (keeps working tree)
-            await run('git reset --soft ' + newCommit);
-            // Also unstage the workflow files
-            await run(`git rm -r --cached --ignore-unmatch ${wfSlash}`);
         } catch (orphanErr: any) {
-            console.error(`[Ultraview] orphan fallback failed: ${orphanErr?.stderr ?? orphanErr?.message}`);
+            console.error(`[Ultraview] reset fallback failed: ${orphanErr?.stderr ?? orphanErr?.message}`);
             return false;
         }
     }
@@ -2102,20 +2102,26 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             if (/workflow/i.test(errMsg) && /scope/i.test(errMsg) && project.accountId) {
                                 const acc = this.accounts.getAccount(project.accountId);
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
+                                    // Note: VS Code's built-in GitHub auth provider
+                                    // does NOT honour the 'workflow' scope — only
+                                    // PATs can have it. The recovery above strips
+                                    // .github/workflows/ from history so the push
+                                    // can land without the scope. If we're here,
+                                    // the recovery was tried and failed.
                                     vscode.window.showErrorMessage(
-                                        `Push failed: GitHub token lacks 'workflow' scope.`,
-                                        'Re-authenticate & Retry'
+                                        `Push failed: GitHub OAuth tokens cannot have 'workflow' scope. ` +
+                                        `Add a Personal Access Token with workflow scope to keep the file, ` +
+                                        `or let Ultraview strip it from history automatically.`,
+                                        'Add PAT (workflow scope)',
+                                        'Re-auth via Browser',
+                                        'OK'
                                     ).then(async (action) => {
-                                        if (action) {
+                                        if (action === 'Add PAT (workflow scope)') {
+                                            await GitProvider._handleAddToken(acc.id, this.view?.webview, this.accounts);
+                                            this.postState();
+                                        } else if (action === 'Re-auth via Browser') {
                                             await this._reAuthOAuth(acc.id, acc.provider);
-                                            try {
-                                                const result = await gitPush(project.path, msg.commitMsg);
-                                                vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
-                                                this.store.write({ lastSyncAt: Date.now() });
-                                                this.postState();
-                                            } catch (retryErr: any) {
-                                                vscode.window.showErrorMessage(`Retry failed: ${retryErr.message || 'Unknown error'}`);
-                                            }
+                                            this.postState();
                                         }
                                     });
                                     return; // Don't show default error yet, notification handles it
@@ -2161,20 +2167,26 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             if (/workflow/i.test(errMsg) && /scope/i.test(errMsg) && project.accountId) {
                                 const acc = this.accounts.getAccount(project.accountId);
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
+                                    // Note: VS Code's built-in GitHub auth provider
+                                    // does NOT honour the 'workflow' scope — only
+                                    // PATs can have it. The recovery above strips
+                                    // .github/workflows/ from history so the push
+                                    // can land without the scope. If we're here,
+                                    // the recovery was tried and failed.
                                     vscode.window.showErrorMessage(
-                                        `Sync failed: GitHub token lacks 'workflow' scope.`,
-                                        'Re-authenticate & Retry'
+                                        `Sync failed: GitHub OAuth tokens cannot have 'workflow' scope. ` +
+                                        `Add a Personal Access Token with workflow scope to keep the file, ` +
+                                        `or let Ultraview strip it from history automatically.`,
+                                        'Add PAT (workflow scope)',
+                                        'Re-auth via Browser',
+                                        'OK'
                                     ).then(async (action) => {
-                                        if (action) {
+                                        if (action === 'Add PAT (workflow scope)') {
+                                            await GitProvider._handleAddToken(acc.id, this.view?.webview, this.accounts);
+                                            this.postState();
+                                        } else if (action === 'Re-auth via Browser') {
                                             await this._reAuthOAuth(acc.id, acc.provider);
-                                            try {
-                                                const result = await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
-                                                vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
-                                                this.store.write({ lastSyncAt: Date.now() });
-                                                this.postState();
-                                            } catch (retryErr: any) {
-                                                vscode.window.showErrorMessage(`Retry failed: ${retryErr.message || 'Unknown error'}`);
-                                            }
+                                            this.postState();
                                         }
                                     });
                                     return; // Don't show default error yet, notification handles it
