@@ -24,3 +24,5 @@ Thumbs.db
 # Web site
 web/site/node_modules/
 web/site/dist/
+# Auto-ignored: GitHub OAuth token lacks workflow scope
+.github/workflows/
