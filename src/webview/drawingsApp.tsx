@@ -38,6 +38,8 @@ let currentDrawingId: string | null = null;
 let lastSavedContent: string | null = null;
 let currentStore: ReturnType<typeof createTLStore> | null = null;
 let reactRoot: ReturnType<typeof ReactDOM.createRoot> | null = null;
+let stopListeningToCurrentStore: (() => void) | null = null;
+const deletingDrawingIds = new Set<string>();
 
 function upsertDrawing(drawings: SyncDrawing[], drawing: SyncDrawing): SyncDrawing[] {
   const index = drawings.findIndex(item => item.id === drawing.id);
@@ -609,13 +611,18 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
     container.style.height = '100%';
 
     const drawing = state.drawings.find(d => d.id === state.activeDrawingId);
+    if (!drawing) return;
+
+    stopListeningToCurrentStore?.();
+    stopListeningToCurrentStore = null;
     const newStore = createStore(drawing?.tldrawContent);
     currentStore = newStore;
+    currentDrawingId = drawing.id;
     lastSavedContent = drawing?.tldrawContent ?? null;
     mountTldraw(container, newStore);
 
     const drawingId = state.activeDrawingId;
-    newStore.listen(() => {
+    stopListeningToCurrentStore = newStore.listen(() => {
       scheduleAutoSave(drawingId, newStore);
     });
   }
@@ -644,7 +651,27 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         e.stopPropagation();
         const id = (deleteBtn as HTMLElement).getAttribute('data-id');
         if (id && confirm('Delete this drawing?')) {
+          deletingDrawingIds.add(id);
+          const remainingDrawings = appState.drawings.filter(drawing => drawing.id !== id);
+          const wasActiveDrawing = appState.activeDrawingId === id;
+          const nextActiveId = wasActiveDrawing
+            ? (getSortedDrawings(remainingDrawings)[0]?.id ?? null)
+            : appState.activeDrawingId;
+
+          if (currentDrawingId === id) {
+            stopListeningToCurrentStore?.();
+            stopListeningToCurrentStore = null;
+            currentStore = null;
+            currentDrawingId = nextActiveId;
+            lastSavedContent = null;
+          }
+
+          saveEditorState({ activeDrawingId: nextActiveId });
+          setState({ drawings: remainingDrawings, activeDrawingId: nextActiveId });
           getVscode().postMessage({ type: 'deleteDrawing', id });
+          if (wasActiveDrawing && nextActiveId) {
+            getVscode().postMessage({ type: 'switchDrawing', id: nextActiveId });
+          }
         }
         return;
       }
@@ -667,10 +694,16 @@ const webviewState = typeof __ultraviewWebviewState !== 'undefined'
   ? __ultraviewWebviewState
   : { drawings: [] as SyncDrawing[], activeWorkspace: '' };
 
+const initialDrawings = (webviewState.drawings ?? []) as SyncDrawing[];
+const savedActiveDrawingId = typeof initState.activeDrawingId === 'string'
+  && initialDrawings.some(drawing => drawing.id === initState.activeDrawingId)
+  ? initState.activeDrawingId
+  : null;
+
 let appState: AppState = {
-  drawings: (webviewState.drawings ?? []) as SyncDrawing[],
+  drawings: initialDrawings,
   activeWorkspace: webviewState.activeWorkspace ?? '',
-  activeDrawingId: initState.activeDrawingId ?? null,
+  activeDrawingId: savedActiveDrawingId,
   filter: (initState.filter ?? 'all') as 'all' | 'global' | 'project',
 };
 
@@ -687,9 +720,23 @@ window.addEventListener('message', (event: MessageEvent) => {
   const msg = event.data as Record<string, unknown>;
 
   if (msg.type === 'drawings') {
+    const receivedDrawings = (msg.drawings as SyncDrawing[]) ?? [];
+    const drawings = receivedDrawings
+      .filter(drawing => !deletingDrawingIds.has(drawing.id));
+    for (const id of deletingDrawingIds) {
+      if (!receivedDrawings.some(drawing => drawing.id === id)) deletingDrawingIds.delete(id);
+    }
+    const activeDrawingId = appState.activeDrawingId
+      && drawings.some(drawing => drawing.id === appState.activeDrawingId)
+      ? appState.activeDrawingId
+      : (getSortedDrawings(drawings)[0]?.id ?? null);
+
+    currentDrawingId = activeDrawingId;
+    saveEditorState({ activeDrawingId });
     appState = {
       ...appState,
-      drawings: (msg.drawings as SyncDrawing[]) ?? [],
+      drawings,
+      activeDrawingId,
       activeWorkspace: typeof msg.activeWorkspace === 'string' ? msg.activeWorkspace : appState.activeWorkspace,
     };
     renderApp(appState, setState);
@@ -697,6 +744,7 @@ window.addEventListener('message', (event: MessageEvent) => {
 
   if (msg.type === 'currentDrawing' && msg.drawing) {
     const drawing = msg.drawing as SyncDrawing;
+    if (deletingDrawingIds.has(drawing.id)) return;
     currentDrawingId = drawing.id;
     appState = {
       ...appState,
@@ -722,6 +770,7 @@ window.addEventListener('message', (event: MessageEvent) => {
 
   if (msg.type === 'drawingSaved' && msg.drawing) {
     const drawing = msg.drawing as SyncDrawing;
+    if (deletingDrawingIds.has(drawing.id) || !appState.drawings.some(item => item.id === drawing.id)) return;
     lastSavedContent = drawing.tldrawContent ?? null;
     appState = {
       ...appState,
