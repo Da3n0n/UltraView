@@ -6,6 +6,7 @@ const ENABLE_COMMAND = 'ultraview.enableTransparent';
 const DISABLE_COMMAND = 'ultraview.disableTransparent';
 const THEME_LABEL = 'Ultraview Transparent';
 const STATE_PREVIOUS_THEME = 'ultraview.transparent.previousTheme';
+const STATE_ENABLED = 'ultraview.transparent.enabled';
 
 const PATCH_MARKER = 'ultraview-transparent-patched';
 const WINDOW_BACKGROUND_MARKER = `${PATCH_MARKER}-window-bg`;
@@ -39,6 +40,8 @@ export function registerThemeCommands(context: vscode.ExtensionContext): void {
       await disableTransparent(context);
     }),
   );
+
+  void repairTransparentPatchAfterUpdate(context);
 }
 
 async function enableTransparent(context: vscode.ExtensionContext): Promise<void> {
@@ -49,6 +52,7 @@ async function enableTransparent(context: vscode.ExtensionContext): Promise<void
     patchWorkbenchJs(paths.workbenchJs);
     await rememberCurrentTheme(context);
     await setWorkbenchTheme(THEME_LABEL);
+    await context.globalState.update(STATE_ENABLED, true);
 
     void vscode.window.showInformationMessage(
       'Ultraview Transparent is enabled. Fully close and reopen the IDE to apply translucency.',
@@ -68,6 +72,7 @@ async function disableTransparent(context: vscode.ExtensionContext): Promise<voi
     ];
     const removed = removedResults.some(Boolean);
 
+    await context.globalState.update(STATE_ENABLED, false);
     await restorePreviousTheme(context);
 
     if (!removed) {
@@ -83,6 +88,53 @@ async function disableTransparent(context: vscode.ExtensionContext): Promise<voi
   } catch (error) {
     handleThemeError('disable transparent mode', error);
   }
+}
+
+async function repairTransparentPatchAfterUpdate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const wasEnabled = context.globalState.get<boolean>(STATE_ENABLED);
+  const enabled = wasEnabled === true || getCurrentTheme() === THEME_LABEL;
+  if (!enabled) {
+    return;
+  }
+
+  try {
+    const paths = resolveInstallPaths(vscode.env.appRoot);
+    if (isTransparentPatchCurrent(paths)) {
+      if (wasEnabled !== true) {
+        await context.globalState.update(STATE_ENABLED, true);
+      }
+      return;
+    }
+
+    patchMainJs(paths.mainJs, getPreferredEffect());
+    patchWorkbenchHtml(paths.workbenchHtml, DEFAULT_OPACITY);
+    patchWorkbenchJs(paths.workbenchJs);
+    await context.globalState.update(STATE_ENABLED, true);
+
+    void vscode.window.showInformationMessage(
+      'Ultraview restored transparency after an IDE update. Fully close and reopen the IDE once more to apply it.',
+    );
+  } catch (error) {
+    handleThemeError('restore transparent mode after the IDE update', error);
+  }
+}
+
+function isTransparentPatchCurrent(paths: InstallPaths): boolean {
+  const mainJs = fs.readFileSync(paths.mainJs, 'utf8');
+  const workbenchHtml = fs.readFileSync(paths.workbenchHtml, 'utf8');
+  const workbenchJs = fs.readFileSync(paths.workbenchJs, 'utf8');
+  const hasTransparentWindow =
+    mainJs.includes(`transparent:!0/*${PATCH_MARKER}*/`) ||
+    mainJs.includes('transparent:!0,backgroundMaterial:');
+
+  return (
+    hasTransparentWindow &&
+    workbenchHtml.includes(HTML_MARKER) &&
+    workbenchHtml.includes(HTML_MARKER_END) &&
+    workbenchJs.includes(PATCH_MARKER)
+  );
 }
 
 async function rememberCurrentTheme(context: vscode.ExtensionContext): Promise<void> {
@@ -279,12 +331,19 @@ function buildMainPatches(effect: EffectType): MainPatch[] {
         /experimentalDarkMode\s*:\s*!0\s*}/,
         /experimentalDarkMode\s*:\s*true\s*}/,
       ],
-      replace: `experimentalDarkMode:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/}`,
+      replace: `experimentalDarkMode:!0,transparent:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/}`,
       patched: [
+        new RegExp(`experimentalDarkMode\\s*:\\s*!0\\s*,\\s*transparent\\s*:\\s*!0\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
+        new RegExp(`experimentalDarkMode\\s*:\\s*true\\s*,\\s*transparent\\s*:\\s*!0\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
         new RegExp(`experimentalDarkMode\\s*:\\s*!0\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
         new RegExp(`experimentalDarkMode\\s*:\\s*true\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
       ],
-      original: ['experimentalDarkMode:!0}', 'experimentalDarkMode:true}'],
+      original: [
+        'experimentalDarkMode:!0}',
+        'experimentalDarkMode:true}',
+        'experimentalDarkMode:!0}',
+        'experimentalDarkMode:true}',
+      ],
       required: true,
     });
   }
