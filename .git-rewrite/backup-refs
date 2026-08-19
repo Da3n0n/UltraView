@@ -1,0 +1,11 @@
+74e5162cbe50a1831487288266d515e1ad92cc01 tree	refs/codex/turn-diffs/checkpoints/4972cd0d733ae12f756075b5f71af681682ac2b61885b9eb31868ea7bf8f0b08/b6538b99e5aa97407817270c9fe577547ddcc29b8ba0f15ad13453027f6e09e6/1787137534625/b8621631-4ccd-4f26-bd12-c6d1411b8348
+cf33d8b764a19a4e214be3f67cf599b658b57a16 commit	refs/heads/main
+2fceaab977d888014ea81040f617fcaf48e1c628 commit	refs/remotes/origin/HEAD
+2fceaab977d888014ea81040f617fcaf48e1c628 commit	refs/remotes/origin/main
+875593d87cecac857382bf43b94ffb6a3581520b tag	refs/tags/potetila-break-of-sync--syn-reqrite
+f48a0cb32a9f290ddbadcafa6f5cc693c730b667 tag	refs/tags/v0.2.0
+5208ba3f50686e4a61620005d4a693048646dd94 commit	refs/tags/v0.2.139
+52b673c0fa3fd09fadca254795aa35f232f5dafd commit	refs/tags/v0.2.142
+250f5a8cb074ecd2c253bb91b42d27c35b843956 commit	refs/tags/v0.2.33
+8cb83799f0bf898ed502aab10ddaf4b0783e3cba commit	refs/tags/v0.2.93
+794134db5bbf389083ec7e72e959b89f9512e0f0 commit	refs/tags/vsix
