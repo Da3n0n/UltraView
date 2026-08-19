@@ -157,6 +157,32 @@ function mountTldraw(container: HTMLElement, store: any): void {
   }));
 }
 
+function deleteDrawingFromTabs(id: string): void {
+  if (deletingDrawingIds.has(id)) return;
+
+  deletingDrawingIds.add(id);
+  const remainingDrawings = appState.drawings.filter(drawing => drawing.id !== id);
+  const wasActiveDrawing = appState.activeDrawingId === id;
+  const nextActiveId = wasActiveDrawing
+    ? (getSortedDrawings(remainingDrawings)[0]?.id ?? null)
+    : appState.activeDrawingId;
+
+  if (currentDrawingId === id) {
+    stopListeningToCurrentStore?.();
+    stopListeningToCurrentStore = null;
+    currentStore = null;
+    currentDrawingId = nextActiveId;
+    lastSavedContent = null;
+  }
+
+  saveEditorState({ activeDrawingId: nextActiveId });
+  setState({ drawings: remainingDrawings, activeDrawingId: nextActiveId });
+  getVscode().postMessage({ type: 'deleteDrawing', id });
+  if (wasActiveDrawing && nextActiveId) {
+    getVscode().postMessage({ type: 'switchDrawing', id: nextActiveId });
+  }
+}
+
 function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): void {
   const app = document.getElementById('app')!;
 
@@ -643,36 +669,26 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
 
   document.addEventListener('click', () => addMenu?.classList.add('hidden'), { once: true });
 
+  // Handle close controls at the tab-strip level. Using pointerdown in the
+  // capture phase keeps tldraw and the parent tab button from swallowing it.
+  document.getElementById('drawing-tabs')?.addEventListener('pointerdown', (event) => {
+    const deleteButton = (event.target as HTMLElement).closest('.drawing-tab-delete');
+    if (!deleteButton) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const id = deleteButton.getAttribute('data-id');
+    if (id) deleteDrawingFromTabs(id);
+  }, true);
+
   document.querySelectorAll('.drawing-tab').forEach(item => {
     item.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
       const deleteBtn = target.closest('.delete-btn');
       if (deleteBtn) {
+        e.preventDefault();
         e.stopPropagation();
         const id = (deleteBtn as HTMLElement).getAttribute('data-id');
-        if (id && confirm('Delete this drawing?')) {
-          deletingDrawingIds.add(id);
-          const remainingDrawings = appState.drawings.filter(drawing => drawing.id !== id);
-          const wasActiveDrawing = appState.activeDrawingId === id;
-          const nextActiveId = wasActiveDrawing
-            ? (getSortedDrawings(remainingDrawings)[0]?.id ?? null)
-            : appState.activeDrawingId;
-
-          if (currentDrawingId === id) {
-            stopListeningToCurrentStore?.();
-            stopListeningToCurrentStore = null;
-            currentStore = null;
-            currentDrawingId = nextActiveId;
-            lastSavedContent = null;
-          }
-
-          saveEditorState({ activeDrawingId: nextActiveId });
-          setState({ drawings: remainingDrawings, activeDrawingId: nextActiveId });
-          getVscode().postMessage({ type: 'deleteDrawing', id });
-          if (wasActiveDrawing && nextActiveId) {
-            getVscode().postMessage({ type: 'switchDrawing', id: nextActiveId });
-          }
-        }
+        if (id) deleteDrawingFromTabs(id);
         return;
       }
       if (currentStore && currentDrawingId) {
