@@ -37,10 +37,46 @@ async function runExclusiveProjectGitOp<T>(projectPath: string, op: () => Promis
         throw new Error('A git operation is already running for this project. Please wait.');
     }
     projectGitOpLocks.add(key);
+    let releaseDiskLock: (() => void) | undefined;
     try {
+        releaseDiskLock = await acquireProjectGitLock(projectPath);
         return await op();
     } finally {
+        releaseDiskLock?.();
         projectGitOpLocks.delete(key);
+    }
+}
+
+async function acquireProjectGitLock(projectPath: string): Promise<() => void> {
+    const gitEntry = path.join(projectPath, '.git');
+    if (!fs.existsSync(gitEntry) || !fs.statSync(gitEntry).isDirectory()) {
+        return () => undefined;
+    }
+
+    const lockPath = path.join(gitEntry, 'ultraview-sync.lock');
+    const deadline = Date.now() + 120_000;
+    while (true) {
+        try {
+            const handle = fs.openSync(lockPath, 'wx');
+            fs.writeFileSync(handle, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+            fs.closeSync(handle);
+            return () => {
+                try { fs.unlinkSync(lockPath); } catch { /* already released */ }
+            };
+        } catch (err: any) {
+            if (err?.code !== 'EEXIST') throw err;
+            try {
+                const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+                if (age > 10 * 60_000) {
+                    fs.unlinkSync(lockPath);
+                    continue;
+                }
+            } catch { /* lock disappeared between checks */ }
+            if (Date.now() >= deadline) {
+                throw new Error('Another IDE is still syncing this local project. Try again when it finishes.');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
     }
 }
 
@@ -174,7 +210,7 @@ function strategyLabel(strategy: GitConflictStrategy): 'local' | 'remote' {
 function clearIndexLock(projectPath: string): void {
     const lockFile = path.join(projectPath, '.git', 'index.lock');
     try {
-        if (fs.existsSync(lockFile)) {
+        if (fs.existsSync(lockFile) && Date.now() - fs.statSync(lockFile).mtimeMs > 2 * 60_000) {
             fs.unlinkSync(lockFile);
         }
     } catch {
@@ -299,21 +335,90 @@ async function hasStagedChanges(run: GitCommandRunner): Promise<boolean> {
  */
 async function stageChangesBestEffort(run: GitCommandRunner, projectPath: string): Promise<boolean> {
     try {
-        await run('git add -A');
+        await run("git add -A -- . :(exclude).git-rewrite/**");
     } catch (err: any) {
         if (/index\.lock|another git process/i.test(err?.stderr ?? err?.message ?? '')) {
             clearIndexLock(projectPath);
             try {
-                await run('git add -A');
+                await run("git add -A -- . :(exclude).git-rewrite/**");
             } catch {
-                await tryGit(run, 'git add --ignore-errors -A');
+                await tryGit(run, "git add --ignore-errors -A -- . :(exclude).git-rewrite/**");
             }
         } else {
-            await tryGit(run, 'git add --ignore-errors -A');
+            await tryGit(run, "git add --ignore-errors -A -- . :(exclude).git-rewrite/**");
         }
     }
 
     return hasStagedChanges(run);
+}
+
+/**
+ * Removes scratch files produced by the old workflow-history rewrite code.
+ * Those files live in the worktree, so a concurrent `git add -A` used to
+ * commit them and then report hundreds of new changes while filter-branch ran.
+ */
+async function removeLegacyRewriteArtifacts(
+    projectPath: string,
+    run: GitCommandRunner
+): Promise<boolean> {
+    let changed = false;
+    const rewriteDir = path.resolve(projectPath, '.git-rewrite');
+    if (path.dirname(rewriteDir) !== path.resolve(projectPath)) {
+        throw new Error('Refusing to clean an invalid .git-rewrite path.');
+    }
+
+    try {
+        const { stdout } = await run('git ls-files .git-rewrite');
+        if (stdout.trim()) {
+            await run('git rm -r --cached --ignore-unmatch -- .git-rewrite');
+            changed = true;
+        }
+    } catch {
+        // The directory may only be untracked; it is still safe to remove.
+    }
+
+    try {
+        if (fs.existsSync(rewriteDir)) {
+            fs.rmSync(rewriteDir, { recursive: true, force: true });
+            changed = true;
+        }
+    } catch (err: any) {
+        throw new Error(`Could not remove stale .git-rewrite data: ${err?.message ?? String(err)}`);
+    }
+
+    // Keep Git's own exclude local to this clone; do not add tool internals to
+    // the shared project .gitignore on every repository.
+    try {
+        const { stdout } = await run('git rev-parse --git-path info/exclude');
+        const rawExcludePath = stdout.trim();
+        const excludePath = path.isAbsolute(rawExcludePath)
+            ? rawExcludePath
+            : path.resolve(projectPath, rawExcludePath);
+        let content = '';
+        try { content = fs.readFileSync(excludePath, 'utf8'); } catch { /* create below */ }
+        if (!/^\.git-rewrite\/$/m.test(content)) {
+            fs.mkdirSync(path.dirname(excludePath), { recursive: true });
+            const separator = content && !content.endsWith('\n') ? '\n' : '';
+            fs.appendFileSync(excludePath, `${separator}.git-rewrite/\n`, 'utf8');
+        }
+    } catch { /* staging also excludes it explicitly */ }
+
+    // Undo only the exact ignore block written by the former recovery path.
+    // User-authored workflow ignore rules are left untouched.
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    try {
+        const content = fs.readFileSync(gitignorePath, 'utf8');
+        const next = content.replace(
+            /(?:^|\r?\n)# Auto-ignored: GitHub OAuth token lacks workflow scope\r?\n\.github\/workflows\/\r?\n?/,
+            '\n'
+        );
+        if (next !== content) {
+            fs.writeFileSync(gitignorePath, next.replace(/^\n/, ''), 'utf8');
+            changed = true;
+        }
+    } catch { /* no legacy ignore block */ }
+
+    return changed;
 }
 
 async function commitStagedChanges(run: GitCommandRunner, tmpFile: string): Promise<void> {
@@ -451,7 +556,10 @@ async function mergeRemoteBranch(
     }
 
     try {
-        const { stdout, stderr } = await run(`git merge --no-edit -X ${strategy} origin/${branch}`);
+        // Start with Git's normal three-way merge. `-X ours/theirs` would make
+        // the command succeed by silently dropping the other machine's side of
+        // every conflicting hunk, which is the opposite of a two-way sync.
+        const { stdout, stderr } = await run(`git merge --no-edit origin/${branch}`);
         const output = trimGitOutput(stdout, stderr);
         if (output && !/^already up to date\.?$/i.test(output)) {
             notes.push(output);
@@ -464,8 +572,10 @@ async function mergeRemoteBranch(
         }
 
         const backupBranch = await createSafetyBranch(run, 'merge-backup');
-        await run(`git checkout --${strategy} -- .`);
-        await run('git add -A');
+        for (const relativePath of unmerged) {
+            await resolveConflictPreservingBoth(projectPath, run, relativePath, strategy);
+        }
+        await stageChangesBestEffort(run, projectPath);
 
         const remaining = await listUnmergedFiles(run);
         if (remaining.length) {
@@ -476,10 +586,71 @@ async function mergeRemoteBranch(
 
         await run('git commit --no-edit');
         notes.push(
-            `auto-resolved ${unmerged.length} conflicted file(s) using ${strategyLabel(strategy)} changes${backupBranch ? ` (backup: ${backupBranch})` : ''}`
+            `preserved both sides of ${unmerged.length} conflicted file(s)${backupBranch ? ` (backup: ${backupBranch})` : ''}`
         );
         return notes;
     }
+}
+
+function combineConflictMarkers(content: string): { content: string; resolved: boolean } {
+    let resolved = false;
+    const combined = content.replace(
+        /^<<<<<<<[^\r\n]*\r?\n([\s\S]*?)^=======\r?\n([\s\S]*?)^>>>>>>>[^\r\n]*(?:\r?\n|$)/gm,
+        (_match, local: string, remote: string) => {
+            resolved = true;
+            if (local === remote) return local;
+            const separator = local.endsWith('\n') || remote.startsWith('\n') ? '' : '\n';
+            return `${local}${separator}${remote}`;
+        }
+    );
+    return { content: combined, resolved };
+}
+
+async function resolveConflictPreservingBoth(
+    projectPath: string,
+    run: GitCommandRunner,
+    relativePath: string,
+    fallbackStrategy: GitConflictStrategy
+): Promise<void> {
+    const quotedPath = `"${relativePath.replace(/"/g, '\\"')}"`;
+    const absolutePath = path.resolve(projectPath, relativePath);
+    const projectRoot = path.resolve(projectPath) + path.sep;
+    if (!absolutePath.startsWith(projectRoot)) {
+        throw new Error(`Refusing to resolve a conflict outside the project: ${relativePath}`);
+    }
+
+    await tryGit(run, `git checkout --conflict=merge -- ${quotedPath}`);
+    if (fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile()) {
+        const buffer = fs.readFileSync(absolutePath);
+        if (!buffer.includes(0)) {
+            const result = combineConflictMarkers(buffer.toString('utf8'));
+            if (result.resolved) {
+                fs.writeFileSync(absolutePath, result.content, 'utf8');
+                await run(`git add -- ${quotedPath}`);
+                return;
+            }
+        }
+    }
+
+    // Binary and modify/delete conflicts cannot be meaningfully combined as
+    // text. Keep the preferred copy at its original path and preserve the
+    // other copy next to it, so neither machine's data is discarded.
+    const otherStrategy = fallbackStrategy === 'ours' ? 'theirs' : 'ours';
+    const suffix = otherStrategy === 'theirs' ? 'remote' : 'local';
+    const preservedPath = `${absolutePath}.ultraview-${suffix}-conflict`;
+    if (await tryGit(run, `git checkout --${otherStrategy} -- ${quotedPath}`)) {
+        if (fs.existsSync(absolutePath)) {
+            fs.copyFileSync(absolutePath, preservedPath);
+        }
+    }
+    if (!(await tryGit(run, `git checkout --${fallbackStrategy} -- ${quotedPath}`))) {
+        // Preferred side deleted the file: keep the surviving copy at the
+        // canonical path as well as the explicitly named conflict copy.
+        if (fs.existsSync(preservedPath)) {
+            fs.copyFileSync(preservedPath, absolutePath);
+        }
+    }
+    await run(`git add -A -- ${quotedPath} "${path.relative(projectPath, preservedPath).replace(/"/g, '\\"')}"`);
 }
 
 /**
@@ -868,6 +1039,17 @@ async function recoverFromWorkflowScope(
     projectPath: string,
     run: GitCommandRunner
 ): Promise<boolean> {
+    // Rewriting a shared branch is not a sync operation. It changes commit
+    // identities for every machine and the old implementation also generated
+    // a stageable `.git-rewrite` directory in the project. Keep the legacy
+    // implementation unreachable unless a developer explicitly opts into it
+    // for a one-off manual recovery.
+    if (process.env.ULTRAVIEW_ALLOW_DESTRUCTIVE_WORKFLOW_REWRITE !== '1') {
+        throw new Error(
+            "GitHub rejected a workflow-file change because this credential lacks workflow permission. Add a GitHub PAT with repository and workflow access; Ultraview will not rewrite shared history or delete workflow files."
+        );
+    }
+
     const wfDir = path.join(projectPath, '.github', 'workflows');
     const wfSlash = '.github/workflows/';
 
@@ -1192,38 +1374,6 @@ async function getSyncDirection(
     }
 }
 
-async function aggressiveRecovery(projectPath: string): Promise<string> {
-    const run = createGitRunner(projectPath);
-    const branch = await getCurrentBranch(projectPath);
-
-    // Abort any ongoing operation
-    for (const cmd of ['git merge --abort', 'git rebase --abort', 'git cherry-pick --abort']) {
-        try {
-            await run(cmd);
-        } catch {
-            /* ignore */
-        }
-    }
-
-    try {
-        // Hard reset to remote - this discards local uncommitted changes
-        await run('git reset --hard HEAD');
-        await run('git clean -fd');
-        await run(`git fetch --quiet origin ${branch}`);
-        await run(`git reset --hard origin/${branch}`);
-        return 'recovered';
-    } catch {
-        // Last resort: force reset
-        try {
-            await run('git fetch --all');
-            await run(`git reset --hard origin/${branch}`);
-            return 'recovered';
-        } catch {
-            return 'recovery-failed';
-        }
-    }
-}
-
 /**
  * Returns paths of all registered git submodules within a repo.
  * Falls back to an empty list if the repo has no submodules or git isn't available.
@@ -1312,6 +1462,10 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
 
     const run = createGitRunner(projectPath);
 
+    // Self-heal repositories affected by the former filter-branch recovery
+    // before status is counted or local changes are committed.
+    await removeLegacyRewriteArtifacts(projectPath, run);
+
     // ── auto-reattach detached HEAD ──────────────────────────────────────────
     const branch = await resolveOrAttachHead(projectPath);
 
@@ -1367,73 +1521,9 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     }
 
     // ── merge remote changes if needed ──────────────────────────────────────
-    try {
-        if (diverged) {
-            try {
-                const { stdout, stderr } = await run(
-                    `git merge -X ours origin/${branch} --no-edit`
-                );
-                const output = trimGitOutput(stdout, stderr);
-                if (/already up to date/i.test(output)) {
-                    await run(`git pull --no-edit -X ours origin ${branch}`);
-                }
-            } catch {
-                // merge failed — try pull with ours strategy
-                await run(`git pull --no-edit -X ours origin ${branch}`);
-            }
-        } else if (behind > 0) {
-            await run(`git pull --no-edit -X ours origin ${branch}`);
-        }
-    } catch {
-        // Pull/merge failed — aggressive recovery, then continue to push
-        const recovered = await aggressiveRecovery(projectPath);
-        if (recovered === 'recovered') {
-            try {
-                const { stdout: statusOut } = await run('git status --porcelain');
-                if (statusOut.trim()) {
-                    if (await stageChangesBestEffort(run, projectPath)) {
-                        const count = statusOut.trim().split('\n').length;
-                        const tmpFile = writeCommitMsgFile(
-                            `Recovery commit: ${count} changed file${count !== 1 ? 's' : ''}`
-                        );
-                        try {
-                            await commitStagedChanges(run, tmpFile);
-                        } finally {
-                            try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-                        }
-                    }
-                }
-                await run(`git pull --no-edit -X ours origin ${branch}`);
-            } catch { /* carry on to push regardless */ }
-        }
+    if (diverged || behind > 0) {
+        await mergeRemoteBranch(projectPath, branch, 'ours');
     }
-
-    // ── pre-flight: strip workflow files BEFORE the first push attempt ───────
-    // This is the key change: instead of waiting for GitHub to reject the
-    // push with "refusing to allow OAuth App to create or update workflow",
-    // we detect workflow files in ANY local commit (not just HEAD) and strip
-    // them up-front. The push then succeeds on the first try and the user
-    // never sees an error. VS Code's built-in GitHub OAuth provider does
-    // NOT grant the 'workflow' scope, so this is the only way to keep
-    // syncing without requiring the user to switch to a PAT.
-    try {
-        // Check ALL of HEAD's history (not just HEAD) — any ancestor commit
-        // that contains a workflow file would cause the push to be rejected.
-        const { stdout: wfCheck } = await run('git log --name-only --pretty=format: HEAD');
-        const hasWorkflowFile = wfCheck
-            .split(/\r?\n/)
-            .some((p) => /^\.github[\\\/]workflows[\\\/].+\.ya?ml$/i.test(p.trim()));
-        if (hasWorkflowFile) {
-            console.log('[Ultraview] pre-flight: workflow file(s) in HEAD history, stripping...');
-            const stripped = await recoverFromWorkflowScope(projectPath, run);
-            if (stripped) {
-                workflowFilesExcluded = true;
-                console.log('[Ultraview] pre-flight: workflow files stripped from history');
-            } else {
-                console.warn('[Ultraview] pre-flight: recovery did not strip all workflow files');
-            }
-        }
-    } catch { /* best-effort pre-flight */ }
 
     // ── push ─────────────────────────────────────────────────────────────────
     // Robust push loop that handles, in order:
@@ -1446,7 +1536,7 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     let pushDone = false;
     let lastPushErr: any;
     let redirectedDuringPush = false;
-    while (!pushDone && pushAttempts < 4) {
+    while (!pushDone && pushAttempts < 8) {
         pushAttempts++;
         try {
             await withTransientRetry(
@@ -1471,11 +1561,10 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
 
             // 2. Non-fast-forward → pull then retry
             if (/rejected|non-fast-forward/i.test(stderr)) {
-                try {
-                    await run(`git pull --no-edit -X ours origin ${branch}`);
-                } catch {
-                    /* fall through to retry */
-                }
+                // Another machine won the race. Fetch its new commit, merge it
+                // without dropping either side, then retry the push. Repeating
+                // this loop converges even when several machines sync at once.
+                await mergeRemoteBranch(projectPath, branch, 'ours');
                 continue;
             }
 

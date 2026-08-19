@@ -101,14 +101,15 @@ async function repairTransparentPatchAfterUpdate(
 
   try {
     const paths = resolveInstallPaths(vscode.env.appRoot);
-    if (isTransparentPatchCurrent(paths)) {
+    const effect = getPreferredEffect();
+    if (isTransparentPatchCurrent(paths, effect)) {
       if (wasEnabled !== true) {
         await context.globalState.update(STATE_ENABLED, true);
       }
       return;
     }
 
-    patchMainJs(paths.mainJs, getPreferredEffect());
+    patchMainJs(paths.mainJs, effect);
     patchWorkbenchHtml(paths.workbenchHtml, DEFAULT_OPACITY);
     patchWorkbenchJs(paths.workbenchJs);
     await context.globalState.update(STATE_ENABLED, true);
@@ -121,13 +122,14 @@ async function repairTransparentPatchAfterUpdate(
   }
 }
 
-function isTransparentPatchCurrent(paths: InstallPaths): boolean {
+function isTransparentPatchCurrent(paths: InstallPaths, effect: EffectType): boolean {
   const mainJs = fs.readFileSync(paths.mainJs, 'utf8');
   const workbenchHtml = fs.readFileSync(paths.workbenchHtml, 'utf8');
   const workbenchJs = fs.readFileSync(paths.workbenchJs, 'utf8');
   const hasTransparentWindow =
-    mainJs.includes(`transparent:!0/*${PATCH_MARKER}*/`) ||
-    mainJs.includes('transparent:!0,backgroundMaterial:');
+    effect === 'none'
+      ? mainJs.includes(`transparent:!0/*${PATCH_MARKER}*/`)
+      : mainJs.includes(`transparent:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/`);
 
   return (
     hasTransparentWindow &&
@@ -246,7 +248,10 @@ function shouldSkipDirectory(name: string): boolean {
 }
 
 function getPreferredEffect(): EffectType {
-  return process.platform === 'win32' ? 'mica' : 'none';
+  // Electron 42 can render an opaque system surface when `transparent` and
+  // `backgroundMaterial` are combined. A transparent BrowserWindow is the
+  // reliable path for the fully see-through Ultraview theme on every OS.
+  return 'none';
 }
 
 function buildMainPatches(effect: EffectType): MainPatch[] {

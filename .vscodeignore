@@ -1,4 +1,5 @@
 .vscode/**
+.git-rewrite/**
 node_modules/**
 src/**
 .gitignore
