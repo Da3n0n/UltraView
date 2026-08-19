@@ -751,6 +751,12 @@ function render() {
           vscode.postMessage({ type: 'openServiceDatabase', profileId: profileId, serviceId: serviceId });
         }
       }
+      if (action === 'disconnect-service-db') {
+        const serviceId = button.getAttribute('data-service-id');
+        if (serviceId) {
+          vscode.postMessage({ type: 'disconnectServiceDatabase', profileId: profileId, serviceId: serviceId });
+        }
+      }
       if (action === 'open-domain') {
         const url = button.getAttribute('data-url');
         if (url) window.open(url, '_blank');
@@ -805,7 +811,12 @@ function renderProfileBody(profile, cache, services, hasToken, isRefreshing, isA
           }).join('')
         : '';
       const actionHtml = canOpenDb
-        ? '<div class="service-actions"><button class="btn" data-action="open-service-db" data-id="' + escAttr(profile.id) + '" data-service-id="' + escAttr(service.id) + '">Open DB</button></div>'
+        ? '<div class="service-actions">' +
+            '<button class="btn" data-action="open-service-db" data-id="' + escAttr(profile.id) + '" data-service-id="' + escAttr(service.id) + '">Open DB</button>' +
+            (service.hasSavedConnection
+              ? '<button class="btn" data-action="disconnect-service-db" data-id="' + escAttr(profile.id) + '" data-service-id="' + escAttr(service.id) + '">Disconnect DB</button>'
+              : '') +
+          '</div>'
         : '';
 
       return '' +
