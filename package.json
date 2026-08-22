@@ -3,7 +3,7 @@
     "icon": "images/icon.png",
     "displayName": "Ultraview “ All in One VS Code Extension",
     "description": "All-in-one VS Code extension: database viewer, markdown editor, interactive code graph, per-project Git account manager with auto credentials, and seamless cross-IDE sync — zero setup.",
-    "version": "0.2.418",
+    "version": "0.2.419",
     "publisher": "Da3n0n",
     "engines": {
         "vscode": "^1.85.0"
@@ -717,6 +717,7 @@
         "lint:fix": "eslint src --ext .ts --fix",
         "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
         "test": "echo \"no tests\"",
+        "test:theme": "node scripts/validate-theme-roundtrip.js",
         "vsix": "vsce package --no-dependencies",
         "release": "git add -A && git diff --staged --quiet || git commit -m \"chore: pre-release\" && npm version minor && git push && git push --tags",
         "release:patch": "git add -A && git diff --staged --quiet || git commit -m \"chore: pre-release\" && npm version patch && git push && git push --tags",

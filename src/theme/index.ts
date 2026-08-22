@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 
 const ENABLE_COMMAND = 'ultraview.enableTransparent';
@@ -12,8 +13,9 @@ const PATCH_MARKER = 'ultraview-transparent-patched';
 const WINDOW_BACKGROUND_MARKER = `${PATCH_MARKER}-window-bg`;
 const HTML_MARKER = '<!-- ultraview-transparent-patched -->';
 const HTML_MARKER_END = '<!-- /ultraview-transparent-patched -->';
-const DEFAULT_OPACITY = 0.82;
+const DEFAULT_OPACITY = 0.18;
 const DEFAULT_FALLBACK_THEME = 'Default Dark Modern';
+const BACKUP_FOLDER = 'transparent-backups';
 
 type EffectType = 'mica' | 'acrylic' | 'tabbed' | 'auto' | 'none';
 
@@ -21,6 +23,18 @@ interface InstallPaths {
   mainJs: string;
   workbenchHtml: string;
   workbenchJs: string;
+}
+
+interface InstallSnapshot {
+  mainJs: Buffer;
+  workbenchHtml: Buffer;
+  workbenchJs: Buffer;
+}
+
+interface BackupManifest {
+  appRoot: string;
+  paths: Record<keyof InstallSnapshot, string>;
+  hashes: Record<keyof InstallSnapshot, string>;
 }
 
 interface MainPatch {
@@ -47,9 +61,7 @@ export function registerThemeCommands(context: vscode.ExtensionContext): void {
 async function enableTransparent(context: vscode.ExtensionContext): Promise<void> {
   try {
     const paths = resolveInstallPaths(vscode.env.appRoot);
-    patchMainJs(paths.mainJs, getPreferredEffect());
-    patchWorkbenchHtml(paths.workbenchHtml, DEFAULT_OPACITY);
-    patchWorkbenchJs(paths.workbenchJs);
+    applyTransparentPatch(context, paths, getPreferredEffect());
     await rememberCurrentTheme(context);
     await setWorkbenchTheme(THEME_LABEL);
     await context.globalState.update(STATE_ENABLED, true);
@@ -65,12 +77,7 @@ async function enableTransparent(context: vscode.ExtensionContext): Promise<void
 async function disableTransparent(context: vscode.ExtensionContext): Promise<void> {
   try {
     const paths = resolveInstallPaths(vscode.env.appRoot);
-    const removedResults = [
-      unpatchMainJs(paths.mainJs),
-      unpatchWorkbenchHtml(paths.workbenchHtml),
-      unpatchWorkbenchJs(paths.workbenchJs),
-    ];
-    const removed = removedResults.some(Boolean);
+    const removed = restoreTransparentPatch(context, paths);
 
     await context.globalState.update(STATE_ENABLED, false);
     await restorePreviousTheme(context);
@@ -109,9 +116,7 @@ async function repairTransparentPatchAfterUpdate(
       return;
     }
 
-    patchMainJs(paths.mainJs, effect);
-    patchWorkbenchHtml(paths.workbenchHtml, DEFAULT_OPACITY);
-    patchWorkbenchJs(paths.workbenchJs);
+    applyTransparentPatch(context, paths, effect);
     await context.globalState.update(STATE_ENABLED, true);
 
     void vscode.window.showInformationMessage(
@@ -129,7 +134,7 @@ function isTransparentPatchCurrent(paths: InstallPaths, effect: EffectType): boo
   const hasTransparentWindow =
     effect === 'none'
       ? mainJs.includes(`transparent:!0/*${PATCH_MARKER}*/`)
-      : mainJs.includes(`transparent:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/`);
+      : mainJs.includes(`backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/`);
 
   return (
     hasTransparentWindow &&
@@ -248,10 +253,255 @@ function shouldSkipDirectory(name: string): boolean {
 }
 
 function getPreferredEffect(): EffectType {
-  // Electron 42 can render an opaque system surface when `transparent` and
-  // `backgroundMaterial` are combined. A transparent BrowserWindow is the
-  // reliable path for the fully see-through Ultraview theme on every OS.
-  return 'none';
+  // Acrylic is the Windows backdrop that blurs content behind the window.
+  // Do not combine it with Electron's `transparent` flag: current Electron
+  // releases can replace the acrylic surface with an opaque compositor layer.
+  return process.platform === 'win32' ? 'acrylic' : 'none';
+}
+
+function applyTransparentPatch(
+  context: vscode.ExtensionContext,
+  paths: InstallPaths,
+  effect: EffectType,
+): void {
+  const current = readInstallSnapshot(paths);
+  const savedOriginal = loadInstallBackup(context, paths);
+  const currentIsPatched = snapshotHasPatch(current);
+  let original: InstallSnapshot;
+  if (currentIsPatched) {
+    if (!savedOriginal) {
+      throw new Error(
+        'This VS Code build has a legacy transparency patch without an exact backup. Repair or reinstall VS Code once before enabling; Ultraview left every file unchanged.',
+      );
+    }
+    original = savedOriginal;
+  } else {
+    original = current;
+  }
+
+  validateOriginalSnapshot(original);
+  if (!savedOriginal || !currentIsPatched) {
+    saveInstallBackup(context, paths, original);
+  }
+
+  const patched: InstallSnapshot = {
+    mainJs: Buffer.from(
+      patchMainJsContent(original.mainJs.toString('utf8'), effect),
+      'utf8',
+    ),
+    workbenchHtml: Buffer.from(
+      patchWorkbenchHtmlContent(
+        original.workbenchHtml.toString('utf8'),
+        DEFAULT_OPACITY,
+      ),
+      'utf8',
+    ),
+    workbenchJs: Buffer.from(
+      patchWorkbenchJsContent(original.workbenchJs.toString('utf8')),
+      'utf8',
+    ),
+  };
+
+  validatePatchedSnapshot(patched, effect);
+  writeInstallSnapshot(paths, patched, current);
+}
+
+function restoreTransparentPatch(
+  context: vscode.ExtensionContext,
+  paths: InstallPaths,
+): boolean {
+  const current = readInstallSnapshot(paths);
+  if (!snapshotHasPatch(current)) {
+    return false;
+  }
+
+  const original = loadInstallBackup(context, paths);
+  if (!original) {
+    throw new Error(
+      'This legacy transparency patch has no exact backup, so Ultraview refused an unsafe guessed restore. Repair or reinstall VS Code to recover its original files.',
+    );
+  }
+  validateOriginalSnapshot(original);
+  writeInstallSnapshot(paths, original, current);
+  return true;
+}
+
+function readInstallSnapshot(paths: InstallPaths): InstallSnapshot {
+  return {
+    mainJs: fs.readFileSync(paths.mainJs),
+    workbenchHtml: fs.readFileSync(paths.workbenchHtml),
+    workbenchJs: fs.readFileSync(paths.workbenchJs),
+  };
+}
+
+function snapshotHasPatch(snapshot: InstallSnapshot): boolean {
+  return Object.values(snapshot).some((content) =>
+    content.includes(Buffer.from(PATCH_MARKER)),
+  );
+}
+
+function validateOriginalSnapshot(snapshot: InstallSnapshot): void {
+  if (snapshotHasPatch(snapshot)) {
+    throw new Error('The saved VS Code originals still contain an Ultraview patch marker. No files were changed.');
+  }
+
+  const mainJs = snapshot.mainJs.toString('utf8');
+  const workbenchHtml = snapshot.workbenchHtml.toString('utf8');
+  if (!mainJs.includes('experimentalDarkMode') || !mainJs.includes('backgroundColor')) {
+    throw new Error('The VS Code main process backup failed structural validation. No files were changed.');
+  }
+  if (!workbenchHtml.includes('</head>')) {
+    throw new Error('The VS Code workbench backup failed structural validation. No files were changed.');
+  }
+}
+
+function validatePatchedSnapshot(
+  snapshot: InstallSnapshot,
+  effect: EffectType,
+): void {
+  const mainJs = snapshot.mainJs.toString('utf8');
+  const workbenchHtml = snapshot.workbenchHtml.toString('utf8');
+  const workbenchJs = snapshot.workbenchJs.toString('utf8');
+  const windowPatch =
+    effect === 'none'
+      ? `transparent:!0/*${PATCH_MARKER}*/`
+      : `backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/`;
+
+  if (
+    !mainJs.includes(windowPatch) ||
+    !workbenchHtml.includes(HTML_MARKER) ||
+    !workbenchHtml.includes(HTML_MARKER_END) ||
+    !workbenchJs.includes(PATCH_MARKER)
+  ) {
+    throw new Error('The generated transparency patch failed validation. No files were changed.');
+  }
+}
+
+function writeInstallSnapshot(
+  paths: InstallPaths,
+  next: InstallSnapshot,
+  rollback: InstallSnapshot,
+): void {
+  const writes: Array<[keyof InstallSnapshot, string]> = [
+    ['workbenchHtml', paths.workbenchHtml],
+    ['workbenchJs', paths.workbenchJs],
+    ['mainJs', paths.mainJs],
+  ];
+  const completed: Array<[keyof InstallSnapshot, string]> = [];
+
+  try {
+    for (const [key, filePath] of writes) {
+      fs.writeFileSync(filePath, next[key]);
+      completed.push([key, filePath]);
+    }
+  } catch (error) {
+    for (const [key, filePath] of completed.reverse()) {
+      try {
+        fs.writeFileSync(filePath, rollback[key]);
+      } catch {
+        // Preserve the first write error; the exact backup remains on disk.
+      }
+    }
+    throw error;
+  }
+}
+
+function getBackupDirectory(context: vscode.ExtensionContext): string {
+  const installId = crypto
+    .createHash('sha256')
+    .update(path.resolve(vscode.env.appRoot).toLowerCase())
+    .digest('hex')
+    .slice(0, 20);
+  return path.join(context.globalStorageUri.fsPath, BACKUP_FOLDER, installId);
+}
+
+function saveInstallBackup(
+  context: vscode.ExtensionContext,
+  paths: InstallPaths,
+  snapshot: InstallSnapshot,
+): void {
+  const backupDir = getBackupDirectory(context);
+  fs.mkdirSync(backupDir, { recursive: true });
+
+  const backupNames: Record<keyof InstallSnapshot, string> = {
+    mainJs: 'main.js.original',
+    workbenchHtml: 'workbench.html.original',
+    workbenchJs: 'workbench.js.original',
+  };
+  const installPaths: Record<keyof InstallSnapshot, string> = {
+    mainJs: paths.mainJs,
+    workbenchHtml: paths.workbenchHtml,
+    workbenchJs: paths.workbenchJs,
+  };
+  const hashes = {} as Record<keyof InstallSnapshot, string>;
+  const relativePaths = {} as Record<keyof InstallSnapshot, string>;
+
+  for (const key of Object.keys(backupNames) as Array<keyof InstallSnapshot>) {
+    fs.writeFileSync(path.join(backupDir, backupNames[key]), snapshot[key]);
+    hashes[key] = hashBuffer(snapshot[key]);
+    relativePaths[key] = path.relative(vscode.env.appRoot, installPaths[key]);
+  }
+
+  const manifest: BackupManifest = {
+    appRoot: path.resolve(vscode.env.appRoot),
+    paths: relativePaths,
+    hashes,
+  };
+  fs.writeFileSync(
+    path.join(backupDir, 'manifest.json'),
+    JSON.stringify(manifest, null, 2),
+    'utf8',
+  );
+}
+
+function loadInstallBackup(
+  context: vscode.ExtensionContext,
+  paths: InstallPaths,
+): InstallSnapshot | undefined {
+  const backupDir = getBackupDirectory(context);
+  const manifestPath = path.join(backupDir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    return undefined;
+  }
+
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(manifestPath, 'utf8'),
+    ) as BackupManifest;
+    if (path.resolve(manifest.appRoot) !== path.resolve(vscode.env.appRoot)) {
+      return undefined;
+    }
+
+    const snapshot: InstallSnapshot = {
+      mainJs: fs.readFileSync(path.join(backupDir, 'main.js.original')),
+      workbenchHtml: fs.readFileSync(
+        path.join(backupDir, 'workbench.html.original'),
+      ),
+      workbenchJs: fs.readFileSync(path.join(backupDir, 'workbench.js.original')),
+    };
+    const currentPaths: Record<keyof InstallSnapshot, string> = {
+      mainJs: paths.mainJs,
+      workbenchHtml: paths.workbenchHtml,
+      workbenchJs: paths.workbenchJs,
+    };
+
+    for (const key of Object.keys(snapshot) as Array<keyof InstallSnapshot>) {
+      if (
+        manifest.paths[key] !==
+          path.relative(vscode.env.appRoot, currentPaths[key]) ||
+        manifest.hashes[key] !== hashBuffer(snapshot[key])
+      ) {
+        return undefined;
+      }
+    }
+    return snapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function hashBuffer(content: Buffer): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
 }
 
 function buildMainPatches(effect: EffectType): MainPatch[] {
@@ -336,7 +586,7 @@ function buildMainPatches(effect: EffectType): MainPatch[] {
         /experimentalDarkMode\s*:\s*!0\s*}/,
         /experimentalDarkMode\s*:\s*true\s*}/,
       ],
-      replace: `experimentalDarkMode:!0,transparent:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/}`,
+      replace: `experimentalDarkMode:!0,backgroundMaterial:"${effect}"/*${PATCH_MARKER}*/}`,
       patched: [
         new RegExp(`experimentalDarkMode\\s*:\\s*!0\\s*,\\s*transparent\\s*:\\s*!0\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
         new RegExp(`experimentalDarkMode\\s*:\\s*true\\s*,\\s*transparent\\s*:\\s*!0\\s*,\\s*backgroundMaterial\\s*:\\s*"${effect}"\\s*/\\*${PATCH_MARKER}\\*/\\s*}`),
@@ -356,8 +606,7 @@ function buildMainPatches(effect: EffectType): MainPatch[] {
   return patches;
 }
 
-function patchMainJs(filePath: string, effect: EffectType): void {
-  let content = fs.readFileSync(filePath, 'utf8');
+function patchMainJsContent(content: string, effect: EffectType): string {
   content = unpatchMainJsContent(content);
 
   for (const patch of buildMainPatches(effect)) {
@@ -367,23 +616,12 @@ function patchMainJs(filePath: string, effect: EffectType): void {
         continue;
       }
 
-      throw new Error(`Could not find expected code in ${path.basename(filePath)} for ${patch.find.map((candidate) => candidate.source).join(' OR ')}`);
+      throw new Error(`Could not find expected VS Code main-process code for ${patch.find.map((candidate) => candidate.source).join(' OR ')}`);
     }
     content = content.replace(pattern, patch.replace);
   }
 
-  fs.writeFileSync(filePath, content, 'utf8');
-}
-
-function unpatchMainJs(filePath: string): boolean {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const next = unpatchMainJsContent(content);
-  if (next === content) {
-    return false;
-  }
-
-  fs.writeFileSync(filePath, next, 'utf8');
-  return true;
+  return content;
 }
 
 function unpatchMainJsContent(content: string): string {
@@ -413,12 +651,11 @@ function unpatchMainJsContent(content: string): string {
   return content;
 }
 
-function patchWorkbenchHtml(filePath: string, opacity: number): void {
-  let content = fs.readFileSync(filePath, 'utf8');
+function patchWorkbenchHtmlContent(content: string, opacity: number): string {
   content = stripWorkbenchHtmlPatch(content);
 
   if (!content.includes('</head>')) {
-    throw new Error(`Could not find </head> in ${path.basename(filePath)}`);
+    throw new Error('Could not find </head> in the VS Code workbench');
   }
 
   const styleBlock = [
@@ -428,19 +665,7 @@ function patchWorkbenchHtml(filePath: string, opacity: number): void {
     `\t\t${HTML_MARKER_END}`,
   ].join('\n');
 
-  content = content.replace('</head>', `${styleBlock}\n\t</head>`);
-  fs.writeFileSync(filePath, content, 'utf8');
-}
-
-function unpatchWorkbenchHtml(filePath: string): boolean {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const next = stripWorkbenchHtmlPatch(content);
-  if (next === content) {
-    return false;
-  }
-
-  fs.writeFileSync(filePath, next, 'utf8');
-  return true;
+  return content.replace('</head>', `${styleBlock}\n\t</head>`);
 }
 
 function stripWorkbenchHtmlPatch(content: string): string {
@@ -456,7 +681,7 @@ function stripWorkbenchHtmlPatch(content: string): string {
   return content.slice(0, removalStart) + content.slice(removalEnd);
 }
 
-function patchWorkbenchJs(filePath: string): void {
+function patchWorkbenchJsContent(content: string): string {
   const find =
     /background-color:\s*(\$\{[^}]+\})\s*;\s*color:\s*(\$\{[^}]+\})\s*;\s*margin:\s*0;\s*padding:\s*0;\s*}/;
   const replacement =
@@ -464,26 +689,13 @@ function patchWorkbenchJs(filePath: string): void {
     '#monaco-parts-splash,#monaco-parts-splash *{background-color:transparent!important}' +
     `/*${PATCH_MARKER}*/`;
 
-  let content = fs.readFileSync(filePath, 'utf8');
   content = unpatchWorkbenchJsContent(content);
 
   if (!find.test(content)) {
-    throw new Error(`Could not find splash screen styles in ${path.basename(filePath)}`);
+    throw new Error('Could not find splash screen styles in the VS Code workbench');
   }
 
-  content = content.replace(find, replacement);
-  fs.writeFileSync(filePath, content, 'utf8');
-}
-
-function unpatchWorkbenchJs(filePath: string): boolean {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const next = unpatchWorkbenchJsContent(content);
-  if (next === content) {
-    return false;
-  }
-
-  fs.writeFileSync(filePath, next, 'utf8');
-  return true;
+  return content.replace(find, replacement);
 }
 
 function unpatchWorkbenchJsContent(content: string): string {
@@ -508,6 +720,7 @@ function buildWorkbenchCss(opacity: number): string {
   const percent = Math.round(clampedOpacity * 100);
 
   return `
+html,
 body {
   background-color: transparent !important;
 }
@@ -526,6 +739,16 @@ body {
 }
 .monaco-workbench {
   background-color: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) ${percent}%, transparent) !important;
+}
+.monaco-workbench.modern-ui .part,
+.monaco-workbench.modern-ui .part > .content,
+.monaco-workbench.modern-ui .editor-group-container,
+.monaco-workbench.modern-ui .editor-group-container > .title,
+.monaco-workbench.modern-ui .editor-group-container > .editor-container,
+.monaco-workbench.modern-ui .monaco-editor-background,
+.monaco-workbench.modern-ui .agents-panel,
+.monaco-workbench.modern-ui .agent-panel {
+  background-color: transparent !important;
 }
 .monaco-workbench .part.activitybar {
   --activity-bar-width: 40px !important;
