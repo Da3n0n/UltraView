@@ -50,13 +50,16 @@ const harness = testModule.exports.__themeHarness;
 const context = { globalStorageUri: { fsPath: backupRoot } };
 
 try {
-  harness.applyTransparentPatch(context, paths, 'acrylic');
-  assert.match(fs.readFileSync(paths.mainJs, 'utf8'), /backgroundMaterial:"acrylic"\/\*ultraview-transparent-patched\*\//);
-  assert.match(fs.readFileSync(paths.workbenchHtml, 'utf8'), /ultraview-transparent-patched/);
+  harness.applyTransparentPatch(context, paths, 'none');
+  assert.match(fs.readFileSync(paths.mainJs, 'utf8'), /transparent:!0\/\*ultraview-transparent-patched\*\//);
+  const patchedHtml = fs.readFileSync(paths.workbenchHtml, 'utf8');
+  assert.match(patchedHtml, /ultraview-transparent-patched/);
+  assert.match(patchedHtml, /--vscode-editor-background: transparent !important/);
+  assert.match(patchedHtml, /--vscode-agentsPanel-background: transparent !important/);
   assert.match(fs.readFileSync(paths.workbenchJs, 'utf8'), /ultraview-transparent-patched/);
 
   // Re-enabling must be idempotent and disabling must restore exact bytes.
-  harness.applyTransparentPatch(context, paths, 'acrylic');
+  harness.applyTransparentPatch(context, paths, 'none');
   assert.strictEqual(harness.restoreTransparentPatch(context, paths), true);
   for (const key of Object.keys(paths)) {
     assert.deepStrictEqual(fs.readFileSync(paths[key]), originals[key]);

@@ -256,10 +256,10 @@ function shouldSkipDirectory(name: string): boolean {
 }
 
 function getPreferredEffect(): EffectType {
-  // Acrylic is the Windows backdrop that blurs content behind the window.
-  // Do not combine it with Electron's `transparent` flag: current Electron
-  // releases can replace the acrylic surface with an opaque compositor layer.
-  return process.platform === 'win32' ? 'acrylic' : 'none';
+  // Electron 42's Windows Acrylic material paints an opaque DWM surface a
+  // moment after startup. Keep the BrowserWindow genuinely transparent and
+  // let the workbench CSS provide only a light tint instead.
+  return 'none';
 }
 
 function applyTransparentPatch(
@@ -741,7 +741,26 @@ body {
   background-color: transparent !important;
 }
 .monaco-workbench {
+  --vscode-editor-background: transparent !important;
+  --vscode-editorGutter-background: transparent !important;
+  --vscode-sideBar-background: transparent !important;
+  --vscode-sideBarSectionHeader-background: transparent !important;
+  --vscode-activityBar-background: transparent !important;
+  --vscode-panel-background: transparent !important;
+  --vscode-titleBar-activeBackground: transparent !important;
+  --vscode-titleBar-inactiveBackground: transparent !important;
+  --vscode-statusBar-background: transparent !important;
+  --vscode-statusBar-noFolderBackground: transparent !important;
+  --vscode-editorGroupHeader-tabsBackground: transparent !important;
+  --vscode-editorGroupHeader-noTabsBackground: transparent !important;
+  --vscode-tab-activeBackground: rgba(255, 255, 255, .06) !important;
+  --vscode-tab-inactiveBackground: transparent !important;
+  --vscode-breadcrumb-background: transparent !important;
+  --vscode-notebook-editorBackground: transparent !important;
+  --vscode-terminal-background: transparent !important;
+  --vscode-agentsPanel-background: transparent !important;
   background-color: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) ${percent}%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(1.08);
 }
 .monaco-workbench.modern-ui .part,
 .monaco-workbench.modern-ui .part > .content,
@@ -751,6 +770,19 @@ body {
 .monaco-workbench.modern-ui .monaco-editor-background,
 .monaco-workbench.modern-ui .agents-panel,
 .monaco-workbench.modern-ui .agent-panel {
+  background-color: transparent !important;
+}
+.monaco-workbench .part.editor > .content,
+.monaco-workbench .part.editor .editor-group-container,
+.monaco-workbench .part.editor .editor-instance,
+.monaco-workbench .part.editor .editor-container,
+.monaco-workbench .part.editor .monaco-editor,
+.monaco-workbench .part.editor .monaco-editor-background,
+.monaco-workbench .part.editor .margin,
+.monaco-workbench .part.editor .overflow-guard,
+.monaco-workbench .part.panel > .content,
+.monaco-workbench .part.sidebar > .content,
+.monaco-workbench .part.auxiliarybar > .content {
   background-color: transparent !important;
 }
 .monaco-workbench .part.activitybar {
