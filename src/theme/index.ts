@@ -256,10 +256,10 @@ function shouldSkipDirectory(name: string): boolean {
 }
 
 function getPreferredEffect(): EffectType {
-  // Electron 42's Windows Acrylic material paints an opaque DWM surface a
-  // moment after startup. Keep the BrowserWindow genuinely transparent and
-  // let the workbench CSS provide only a light tint instead.
-  return 'none';
+  // Mica-only is Ultraview's original Windows path. It keeps the native DWM
+  // frame (including rounded corners) without Electron's square-cornered
+  // per-pixel `transparent` window or Acrylic's delayed opaque repaint.
+  return process.platform === 'win32' ? 'mica' : 'none';
 }
 
 function applyTransparentPatch(
