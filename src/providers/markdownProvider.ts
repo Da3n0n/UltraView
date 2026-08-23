@@ -16,7 +16,7 @@ export class MarkdownProvider implements vscode.CustomEditorProvider<MarkdownDoc
   ): MarkdownDocument {
     return new MarkdownDocument(uri);
   }
-
+ 
   async resolveCustomEditor(
     document: MarkdownDocument,
     panel: vscode.WebviewPanel,
