@@ -116,14 +116,17 @@ async function repairTransparentPatchAfterUpdate(
       return;
     }
 
-    applyTransparentPatch(context, paths, effect);
-    await context.globalState.update(STATE_ENABLED, true);
+    // Never rewrite IDE installation files during extension activation. If an
+    // IDE update or repair replaced the patch, leave that verified clean build
+    // bootable and require an explicit command before touching it again.
+    await context.globalState.update(STATE_ENABLED, false);
+    await restorePreviousTheme(context);
 
-    void vscode.window.showInformationMessage(
-      'Ultraview restored transparency after an IDE update. Fully close and reopen the IDE once more to apply it.',
+    void vscode.window.showWarningMessage(
+      'VS Code was updated or repaired, so Ultraview left its installation files untouched. Run “Ultraview: Enable Transparent” explicitly if you want to enable it for this build.',
     );
   } catch (error) {
-    handleThemeError('restore transparent mode after the IDE update', error);
+    handleThemeError('check transparent mode after the IDE update', error);
   }
 }
 
