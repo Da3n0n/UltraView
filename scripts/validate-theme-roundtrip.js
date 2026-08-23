@@ -60,6 +60,9 @@ try {
   assert.match(patchedHtml, /ultraview-transparent-patched/);
   assert.match(patchedHtml, /--vscode-editor-background: transparent !important/);
   assert.match(patchedHtml, /--vscode-agentsPanel-background: transparent !important/);
+  assert.match(patchedHtml, /--modern-ui-shell-background: transparent !important/);
+  assert.match(patchedHtml, /\.monaco-workbench > \.monaco-grid-view/);
+  assert.match(patchedHtml, /\.monaco-workbench \.monaco-editor-background/);
   assert.match(patchedHtml, /rgba\(30, 30, 30, 1\) 0%/);
   assert.doesNotMatch(patchedHtml, /backdrop-filter: blur\(18px\)/);
   assert.match(fs.readFileSync(paths.workbenchJs, 'utf8'), /ultraview-transparent-patched/);

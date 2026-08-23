@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **VS Code 1.134 late opaque repaint** — Keeps the new full-window `.monaco-grid-view`, `--modern-ui-shell-background`, and late Monaco editor canvas transparent after the workbench finishes loading. This preserves the Windhawk blur visible during startup instead of covering it one second later.
 - **Windhawk-native transparent windows** — Windows now uses the same composition strategy as UltraBrowse: a normal rounded Electron window requests native Acrylic, transparent renderer surfaces reveal it, and the Translucent Windows Windhawk mod remains responsible for the persistent AccentBlurBehind effect. This avoids Electron's unstable layered `transparent: true` windows and removes the expensive renderer `backdrop-filter`.
 - **Sync self-heals from the `workflow` scope poison-pill loop, permanently** — When a project is ahead of remote and contains `.github/workflows/`, sync (and push) now does four things in one shot:
   1. Adds `.github/workflows/` to the local `.gitignore` so the extension's `git add -A` (and any manual `git add .`) never re-stages the orphaned workflow file again

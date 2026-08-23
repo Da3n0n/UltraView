@@ -13,6 +13,7 @@ const PATCH_MARKER = 'ultraview-transparent-patched';
 const WINDOW_BACKGROUND_MARKER = `${PATCH_MARKER}-window-bg`;
 const HTML_MARKER = '<!-- ultraview-transparent-patched -->';
 const HTML_MARKER_END = '<!-- /ultraview-transparent-patched -->';
+const REQUIRED_LATE_WORKBENCH_PATCH = '.monaco-workbench > .monaco-grid-view';
 // Windhawk owns the tint (currently 3A232323 on this machine), just as it does
 // for UltraBrowse. Adding a second renderer tint would make VS Code darker.
 const DEFAULT_OPACITY = 0;
@@ -145,6 +146,7 @@ function isTransparentPatchCurrent(paths: InstallPaths, effect: EffectType): boo
     hasTransparentWindow &&
     workbenchHtml.includes(HTML_MARKER) &&
     workbenchHtml.includes(HTML_MARKER_END) &&
+    workbenchHtml.includes(REQUIRED_LATE_WORKBENCH_PATCH) &&
     workbenchJs.includes(PATCH_MARKER)
   );
 }
@@ -379,6 +381,7 @@ function validatePatchedSnapshot(
     !mainJs.includes(windowPatch) ||
     !workbenchHtml.includes(HTML_MARKER) ||
     !workbenchHtml.includes(HTML_MARKER_END) ||
+    !workbenchHtml.includes(REQUIRED_LATE_WORKBENCH_PATCH) ||
     !workbenchJs.includes(PATCH_MARKER)
   ) {
     throw new Error('The generated transparency patch failed validation. No files were changed.');
@@ -746,6 +749,7 @@ body {
   background-color: transparent !important;
 }
 .monaco-workbench {
+  --modern-ui-shell-background: transparent !important;
   --vscode-editor-background: transparent !important;
   --vscode-editorGutter-background: transparent !important;
   --vscode-sideBar-background: transparent !important;
@@ -765,6 +769,11 @@ body {
   --vscode-terminal-background: transparent !important;
   --vscode-agentsPanel-background: transparent !important;
   background-color: color-mix(in srgb, rgba(30, 30, 30, 1) ${percent}%, transparent) !important;
+}
+.monaco-workbench > .monaco-grid-view,
+.monaco-workbench .monaco-editor-background,
+.monaco-workbench .lines-content {
+  background-color: transparent !important;
 }
 .monaco-workbench.modern-ui .part,
 .monaco-workbench.modern-ui .part > .content,
