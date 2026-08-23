@@ -50,18 +50,22 @@ const harness = testModule.exports.__themeHarness;
 const context = { globalStorageUri: { fsPath: backupRoot } };
 
 try {
-  harness.applyTransparentPatch(context, paths, 'mica');
+  harness.applyTransparentPatch(context, paths, 'acrylic');
   const patchedMain = fs.readFileSync(paths.mainJs, 'utf8');
-  assert.match(patchedMain, /backgroundMaterial:"mica"\/\*ultraview-transparent-patched\*\//);
-  assert.doesNotMatch(patchedMain, /transparent:!0,backgroundMaterial:"mica"/);
+  assert.match(patchedMain, /backgroundMaterial:"acrylic"\/\*ultraview-transparent-patched\*\//);
+  assert.doesNotMatch(patchedMain, /transparent:!0,backgroundMaterial:"acrylic"/);
+  assert.match(patchedMain, /backgroundColor:"#00000000"/);
+  assert.match(patchedMain, /ultraview-transparent-patched-window-bg/);
   const patchedHtml = fs.readFileSync(paths.workbenchHtml, 'utf8');
   assert.match(patchedHtml, /ultraview-transparent-patched/);
   assert.match(patchedHtml, /--vscode-editor-background: transparent !important/);
   assert.match(patchedHtml, /--vscode-agentsPanel-background: transparent !important/);
+  assert.match(patchedHtml, /rgba\(30, 30, 30, 1\) 0%/);
+  assert.doesNotMatch(patchedHtml, /backdrop-filter: blur\(18px\)/);
   assert.match(fs.readFileSync(paths.workbenchJs, 'utf8'), /ultraview-transparent-patched/);
 
   // Re-enabling must be idempotent and disabling must restore exact bytes.
-  harness.applyTransparentPatch(context, paths, 'mica');
+  harness.applyTransparentPatch(context, paths, 'acrylic');
   assert.strictEqual(harness.restoreTransparentPatch(context, paths), true);
   for (const key of Object.keys(paths)) {
     assert.deepStrictEqual(fs.readFileSync(paths[key]), originals[key]);

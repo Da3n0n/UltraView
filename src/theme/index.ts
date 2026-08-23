@@ -13,7 +13,9 @@ const PATCH_MARKER = 'ultraview-transparent-patched';
 const WINDOW_BACKGROUND_MARKER = `${PATCH_MARKER}-window-bg`;
 const HTML_MARKER = '<!-- ultraview-transparent-patched -->';
 const HTML_MARKER_END = '<!-- /ultraview-transparent-patched -->';
-const DEFAULT_OPACITY = 0.18;
+// Windhawk owns the tint (currently 3A232323 on this machine), just as it does
+// for UltraBrowse. Adding a second renderer tint would make VS Code darker.
+const DEFAULT_OPACITY = 0;
 const DEFAULT_FALLBACK_THEME = 'Default Dark Modern';
 const BACKUP_FOLDER = 'transparent-backups';
 
@@ -256,10 +258,13 @@ function shouldSkipDirectory(name: string): boolean {
 }
 
 function getPreferredEffect(): EffectType {
-  // Mica-only is Ultraview's original Windows path. It keeps the native DWM
-  // frame (including rounded corners) without Electron's square-cornered
-  // per-pixel `transparent` window or Acrylic's delayed opaque repaint.
-  return process.platform === 'win32' ? 'mica' : 'none';
+  // Match UltraBrowse's Windows composition path exactly: keep a normal,
+  // non-layered Electron window and request Acrylic so DWM is initialized.
+  // The Translucent Windows Windhawk mod intercepts that native request and
+  // supplies AccentBlurBehind, while the renderer patches below expose it.
+  // Never use Electron's `transparent: true` on Windows: it creates a layered
+  // square-cornered window and has regressed across recent Electron releases.
+  return process.platform === 'win32' ? 'acrylic' : 'none';
 }
 
 function applyTransparentPatch(
@@ -759,8 +764,7 @@ body {
   --vscode-notebook-editorBackground: transparent !important;
   --vscode-terminal-background: transparent !important;
   --vscode-agentsPanel-background: transparent !important;
-  background-color: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) ${percent}%, transparent) !important;
-  backdrop-filter: blur(18px) saturate(1.08);
+  background-color: color-mix(in srgb, rgba(30, 30, 30, 1) ${percent}%, transparent) !important;
 }
 .monaco-workbench.modern-ui .part,
 .monaco-workbench.modern-ui .part > .content,
