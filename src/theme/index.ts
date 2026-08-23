@@ -770,6 +770,11 @@ body {
   --vscode-agentsPanel-background: transparent !important;
   background-color: color-mix(in srgb, rgba(30, 30, 30, 1) ${percent}%, transparent) !important;
 }
+.monaco-workbench[class*="ultraview-transparent-dark"] {
+  /* The dark theme uses the exact same component palette as the regular
+     transparent theme, with one uniform compositor tint behind everything. */
+  background-color: rgba(0, 0, 0, .28) !important;
+}
 .monaco-workbench > .monaco-grid-view,
 .monaco-workbench .monaco-editor-background,
 .monaco-workbench .lines-content {

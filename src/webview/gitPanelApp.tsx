@@ -277,11 +277,11 @@ function App() {
         .projects-grid, .accounts-grid { display:grid; gap:8px; }
         .card {
           display:grid; gap:8px; padding:12px; border-radius:14px; border:1px solid var(--border);
-          background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+          background:rgba(255,255,255,.025); isolation:isolate; contain:paint;
           box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
           transition: transform .16s ease, border-color .16s ease, background .16s ease;
         }
-        .card:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--border) 50%, var(--accent)); background:linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02)); }
+        .card:hover { transform: translateY(-1px); border-color: color-mix(in srgb, var(--border) 50%, var(--accent)); background:rgba(255,255,255,.04); }
         .card.active { border-color: rgba(110,231,183,.5); box-shadow: 0 0 0 1px rgba(110,231,183,.16), inset 0 1px 0 rgba(255,255,255,.03); }
         .project-main, .account-main { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
         .project-meta, .account-meta { min-width:0; display:grid; gap:4px; }

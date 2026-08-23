@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- **Transparent Dark theme alignment** — Rebuilt the dark theme on top of the regular transparent theme's complete component palette, then applies one uniform darker workbench tint. Editors, sidebars, panels, custom Ultraview views, text, selections, and controls now share the same visual system instead of every color being flattened to `#0000003e`.
+- **Project Manager glass-card banding** — Account and project cards now use a single clipped translucent surface instead of a low-alpha gradient, preserving their rounded glass appearance without visible gradient bands.
 - **VS Code 1.134 late opaque repaint** — Keeps the new full-window `.monaco-grid-view`, `--modern-ui-shell-background`, and late Monaco editor canvas transparent after the workbench finishes loading. This preserves the Windhawk blur visible during startup instead of covering it one second later.
 - **Windhawk-native transparent windows** — Windows now uses the same composition strategy as UltraBrowse: a normal rounded Electron window requests native Acrylic, transparent renderer surfaces reveal it, and the Translucent Windows Windhawk mod remains responsible for the persistent AccentBlurBehind effect. This avoids Electron's unstable layered `transparent: true` windows and removes the expensive renderer `backdrop-filter`.
 - **Sync self-heals from the `workflow` scope poison-pill loop, permanently** — When a project is ahead of remote and contains `.github/workflows/`, sync (and push) now does four things in one shot:

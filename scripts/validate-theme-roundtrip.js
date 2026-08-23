@@ -48,6 +48,15 @@ testModule._compile(compiled, testModule.filename);
 
 const harness = testModule.exports.__themeHarness;
 const context = { globalStorageUri: { fsPath: backupRoot } };
+const darkTheme = JSON.parse(
+  fs.readFileSync(
+    path.join(__dirname, '..', 'themes', 'ultraview-transparent-dark-color-theme.json'),
+    'utf8',
+  ),
+);
+
+assert.strictEqual(darkTheme.include, './ultraview-transparent-color-theme.json');
+assert.strictEqual(darkTheme.type, 'dark');
 
 try {
   harness.applyTransparentPatch(context, paths, 'acrylic');
@@ -63,6 +72,8 @@ try {
   assert.match(patchedHtml, /--modern-ui-shell-background: transparent !important/);
   assert.match(patchedHtml, /\.monaco-workbench > \.monaco-grid-view/);
   assert.match(patchedHtml, /\.monaco-workbench \.monaco-editor-background/);
+  assert.match(patchedHtml, /\[class\*="ultraview-transparent-dark"\]/);
+  assert.match(patchedHtml, /background-color: rgba\(0, 0, 0, \.28\) !important/);
   assert.match(patchedHtml, /rgba\(30, 30, 30, 1\) 0%/);
   assert.doesNotMatch(patchedHtml, /backdrop-filter: blur\(18px\)/);
   assert.match(fs.readFileSync(paths.workbenchJs, 'utf8'), /ultraview-transparent-patched/);
