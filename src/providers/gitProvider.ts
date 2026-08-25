@@ -665,58 +665,36 @@ async function getProjectLocalStatus(
     const run = createGitRunner(projectPath, 5000);
 
     try {
-        await run('git rev-parse --is-inside-work-tree');
+        // One porcelain call both verifies the repository and returns its
+        // branch plus working-tree changes. This replaces three Git process
+        // launches per project on every panel refresh.
+        const { stdout } = await run('git status --porcelain=v1 --branch');
+        const lines = stdout.replace(/\r/g, '').split('\n').filter(Boolean);
+        const header = lines[0]?.startsWith('## ') ? lines[0].slice(3) : '';
+        let branch = header.split('...')[0];
+        if (branch.startsWith('No commits yet on ')) branch = branch.slice('No commits yet on '.length);
+        if (branch === 'HEAD (no branch)' || branch.startsWith('HEAD ')) branch = '';
+
+        return {
+            isGitRepo: true,
+            localChanges: lines.slice(header ? 1 : 0).length,
+            ahead: prevStatus?.ahead ?? 0,
+            behind: prevStatus?.behind ?? 0,
+            branch: branch || prevStatus?.branch || '',
+        };
     } catch {
         return empty;
     }
-
-    const status: GitStatus = {
-        isGitRepo: true,
-        localChanges: 0,
-        ahead: prevStatus?.ahead ?? 0,
-        behind: prevStatus?.behind ?? 0,
-        branch: prevStatus?.branch ?? '',
-    };
-
-    try {
-        const { stdout: branchOut } = await run('git branch --show-current');
-        status.branch = branchOut.trim();
-    } catch { /* detached HEAD */ }
-
-    try {
-        const { stdout: statusOut } = await run('git status --porcelain');
-        status.localChanges = statusOut.trim() ? statusOut.trim().split('\n').length : 0;
-    } catch { /* ignore */ }
-
-    return status;
 }
 
-async function getProjectGitStatus(projectPath: string): Promise<GitStatus> {
-    const empty: GitStatus = { isGitRepo: false, localChanges: 0, ahead: 0, behind: 0, branch: '' };
+async function getProjectGitStatus(projectPath: string, localStatus?: GitStatus): Promise<GitStatus> {
     const run = createGitRunner(projectPath, 8000);
-
-    try {
-        // Check if dir exists and is a git repo
-        await run('git rev-parse --is-inside-work-tree');
-    } catch {
-        return empty;
-    }
-
-    const status: GitStatus = { isGitRepo: true, localChanges: 0, ahead: 0, behind: 0, branch: '' };
-
-    try {
-        const { stdout: branchOut } = await run('git branch --show-current');
-        status.branch = branchOut.trim();
-    } catch {
-        /* detached HEAD */
-    }
-
-    try {
-        const { stdout: statusOut } = await run('git status --porcelain');
-        status.localChanges = statusOut.trim() ? statusOut.trim().split('\n').length : 0;
-    } catch {
-        /* ignore */
-    }
+    const status = localStatus
+        ? { ...localStatus }
+        : await getProjectLocalStatus(projectPath);
+    if (!status.isGitRepo) return status;
+    status.ahead = 0;
+    status.behind = 0;
 
     // Fetch (with redirect-on-moved + transient retry) so the ahead/behind
     // badge reflects the *real* remote state and never gets stuck on stale
@@ -1662,6 +1640,8 @@ export class GitProvider implements vscode.WebviewViewProvider {
     private store: SharedStore;
     /** Last-known git statuses — used to populate the UI instantly before async fetch */
     private _cachedGitStatuses: Record<string, GitStatus> = {};
+    /** Avoid repeating network fetches when several load/visibility events arrive together. */
+    private _remoteStatusCheckedAt: Record<string, number> = {};
     /** Monotonic guard so older async status refreshes cannot overwrite newer results */
     private _statusRefreshSeq = 0;
     /** Cached S3 credential check result to avoid repeated keychain reads */
@@ -1941,12 +1921,11 @@ export class GitProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.type) {
                 case 'ready': {
-                    // On ready, auto-apply credentials for the current project
-                    await this._autoApplyOnOpen();
-                    // Fire token validation in the background — do NOT await before postState
-                    // so the webview renders immediately with cached data.
+                    // Render immediately. Credential application and token validation
+                    // are independent background work and must not hold up first paint.
+                    void this._autoApplyOnOpen();
                     this._validateAllTokensBackground().then(() => {
-                        if (this.view) this.postState();
+                        if (this.view) void this._postCachedState();
                     });
                     // Bump lastOpened for the currently active workspace so it rises to top of list
                     const activeRepoOnReady =
@@ -2200,6 +2179,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         // Invalidate cached status so the post-op badge reflects
                         // the real remote state, not the pre-op cached one.
                         delete this._cachedGitStatuses[project.id];
+                        delete this._remoteStatusCheckedAt[project.id];
                         try {
                             await this._postSingleProjectState(project.id);
                         } finally {
@@ -2251,6 +2231,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         // Invalidate cached status so the post-op badge reflects
                         // the real remote state, not the pre-op cached one.
                         delete this._cachedGitStatuses[project.id];
+                        delete this._remoteStatusCheckedAt[project.id];
                         try {
                             await this._postSingleProjectState(project.id);
                         } finally {
@@ -2266,6 +2247,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         // Invalidate the cached status so the next read returns
                         // a fresh value, not whatever the last sync left behind.
                         delete this._cachedGitStatuses[project.id];
+                        delete this._remoteStatusCheckedAt[project.id];
                         // Force a full re-fetch + rev-list
                         try {
                             await this._postSingleProjectState(project.id);
@@ -2333,6 +2315,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         // to "synced" instead of staying stuck on 1 ahead / 1
                         // behind / 1 local.
                         delete this._cachedGitStatuses[project.id];
+                        delete this._remoteStatusCheckedAt[project.id];
                         try {
                             await this._postSingleProjectState(project.id);
                         } finally {
@@ -2344,8 +2327,8 @@ export class GitProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        // initial state
-        this.postState();
+        // The webview's ready message requests initial state. Avoid also starting
+        // a duplicate all-project Git scan here during the same load.
     }
 
     /** Returns whether an S3 backup bucket is configured, caching the result for 60 s. */
@@ -2365,8 +2348,38 @@ export class GitProvider implements vscode.WebviewViewProvider {
         this._s3CredsCachedAt = 0;
     }
 
+    /** Send account/project metadata with existing badges and no Git processes. */
+    private async _postCachedState(): Promise<void> {
+        if (!this.view?.visible) return;
+        const projects = this.manager
+            .listProjects()
+            .slice()
+            .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+        const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+        const activeProject = projects.find((project) => project.path === activeRepo);
+        const accounts = this.accounts.listAccounts();
+        const activeAccountId = activeProject?.accountId
+            || (activeRepo ? this.accounts.getLocalAccount(activeRepo)?.id : undefined);
+        const hasBackupBucket = await this._hasBackupBucket();
+        if (!this.view?.visible) return;
+        this.view.webview.postMessage({
+            type: 'state',
+            projects,
+            activeRepo,
+            activeRepoName: vscode.workspace.workspaceFolders?.[0]?.name ?? '',
+            accounts: accounts.map((account) => ({
+                ...account,
+                authStatus: this.accounts.getAccountAuthStatus(account),
+            })),
+            activeAccountId: activeAccountId || null,
+            activeProjectId: activeProject?.id || null,
+            gitStatuses: this._cachedGitStatuses,
+            hasBackupBucket,
+        });
+    }
+
     async postState() {
-        if (!this.view) return;
+        if (!this.view?.visible) return;
         const refreshSeq = ++this._statusRefreshSeq;
         const projects = this.manager
             .listProjects()
@@ -2409,25 +2422,32 @@ export class GitProvider implements vscode.WebviewViewProvider {
 
         // Pass 2: fast local-only check (no network fetch) — updates localChanges badge quickly
         const localStatuses: Record<string, GitStatus> = {};
-        await Promise.allSettled(
-            projects.map(async (p) => {
+        const LOCAL_CONCURRENCY = 4;
+        for (let i = 0; i < projects.length; i += LOCAL_CONCURRENCY) {
+            const batch = projects.slice(i, i + LOCAL_CONCURRENCY);
+            await Promise.allSettled(batch.map(async (p) => {
                 localStatuses[p.id] = await getProjectLocalStatus(p.path, this._cachedGitStatuses[p.id]);
-            })
-        );
+            }));
+        }
         if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
         this._cachedGitStatuses = { ...this._cachedGitStatuses, ...localStatuses };
         if (this.view) this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
 
-        // Pass 3: full check with git fetch — updates ahead/behind for all projects.
-        // Fetches are capped at 3 concurrent to avoid saturating the network/thread pool.
-        // No TTL skipping — every refresh gets fresh remote status so badges are always current.
-        const MAX_CONCURRENT = 3;
+        // Pass 3: full check with git fetch — updates ahead/behind. A short TTL
+        // coalesces startup, visibility, and store events; the existing 30 s UI
+        // refresh still keeps every badge current.
+        const REMOTE_STATUS_TTL_MS = 25_000;
+        const now = Date.now();
+        const projectsNeedingRemote = projects.filter(
+            (project) => now - (this._remoteStatusCheckedAt[project.id] ?? 0) >= REMOTE_STATUS_TTL_MS
+        );
+        const MAX_CONCURRENT = 2;
         const remoteStatuses: Record<string, GitStatus> = {};
-        for (let i = 0; i < projects.length; i += MAX_CONCURRENT) {
-            const batch = projects.slice(i, i + MAX_CONCURRENT);
+        for (let i = 0; i < projectsNeedingRemote.length; i += MAX_CONCURRENT) {
+            const batch = projectsNeedingRemote.slice(i, i + MAX_CONCURRENT);
             await Promise.allSettled(
                 batch.map(async (p) => {
-                    remoteStatuses[p.id] = await getProjectGitStatus(p.path);
+                    remoteStatuses[p.id] = await getProjectGitStatus(p.path, localStatuses[p.id]);
                 })
             );
         }
@@ -2435,6 +2455,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
         if (Object.keys(remoteStatuses).length > 0) {
             if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
             this._cachedGitStatuses = { ...this._cachedGitStatuses, ...remoteStatuses };
+            const checkedAt = Date.now();
+            for (const projectId of Object.keys(remoteStatuses)) {
+                this._remoteStatusCheckedAt[projectId] = checkedAt;
+            }
             if (this.view) this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
         }
     }
@@ -2458,6 +2482,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         );
 
         const onFileEvent = () => {
+            if (!this.view?.visible) return;
             // Debounce: wait 400 ms of quiet before firing so rapid saves don't flood
             if (this._fsWatcherDebounce) clearTimeout(this._fsWatcherDebounce);
             this._fsWatcherDebounce = setTimeout(() => {
@@ -2540,6 +2565,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
         if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
         this._cachedGitStatuses = { ...this._cachedGitStatuses, ...gitStatuses };
+        if (gitStatuses[projectId]) this._remoteStatusCheckedAt[projectId] = Date.now();
         this.view.webview.postMessage({
             type: 'state',
             projects,

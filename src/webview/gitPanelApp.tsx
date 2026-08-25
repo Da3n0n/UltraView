@@ -33,6 +33,14 @@ function authToneClass(status?: string): string {
     return 'status-dot-valid';
 }
 
+function sameGitStatus(left?: GitStatusState, right?: GitStatusState): boolean {
+    return left?.isGitRepo === right?.isGitRepo
+        && left?.localChanges === right?.localChanges
+        && left?.ahead === right?.ahead
+        && left?.behind === right?.behind
+        && left?.branch === right?.branch;
+}
+
 function App() {
     const [state, setState] = useState<PanelState>(emptyState);
     // Stable git statuses — never wiped to empty; only merged when real data arrives
@@ -44,6 +52,9 @@ function App() {
     const [loaded, setLoaded] = useState(false);
     // Track project IDs we know are git repos so we can keep the action row visible
     const knownGitRepos = useRef<Set<string>>(new Set());
+    // Each refresh arrives in cached/local/remote passes. Their metadata is
+    // identical, so avoid rerendering the whole project list three times.
+    const metadataSignature = useRef('');
 
     useEffect(() => {
         const vscode = getVscode();
@@ -65,16 +76,20 @@ function App() {
             if (msg.type === 'state') {
                 setLoaded(true);
 
-                // Update non-status state
-                setState((prev) => ({
+                const nextState: PanelState = {
                     projects: msg.projects,
                     activeRepo: msg.activeRepo,
                     activeRepoName: msg.activeRepoName,
                     accounts: msg.accounts,
                     activeAccountId: msg.activeAccountId,
                     activeProjectId: msg.activeProjectId,
-                    hasBackupBucket: msg.hasBackupBucket ?? prev.hasBackupBucket,
-                }));
+                    hasBackupBucket: msg.hasBackupBucket,
+                };
+                const nextMetadataSignature = JSON.stringify(nextState);
+                if (nextMetadataSignature !== metadataSignature.current) {
+                    metadataSignature.current = nextMetadataSignature;
+                    setState(nextState);
+                }
 
                 const incomingStatuses = msg.gitStatuses ?? {};
                 const hasStatuses = Object.keys(incomingStatuses).length > 0;
@@ -82,37 +97,48 @@ function App() {
                 if (msg.onlyProjectId) {
                     // Targeted update for a single project
                     if (hasStatuses) {
-                        setGitStatuses((current) => ({ ...current, ...incomingStatuses }));
+                        setGitStatuses((current) => {
+                            const changed = Object.entries(incomingStatuses)
+                                .some(([id, status]) => !sameGitStatus(current[id], status));
+                            return changed ? { ...current, ...incomingStatuses } : current;
+                        });
                         Object.entries(incomingStatuses).forEach(([id, s]) => {
                             if (s.isGitRepo) knownGitRepos.current.add(id);
                         });
                     }
                     setCheckingIds((current) => {
+                        if (!current.has(msg.onlyProjectId!)) return current;
                         const next = new Set(current);
                         next.delete(msg.onlyProjectId!);
                         return next;
                     });
                 } else if (hasStatuses) {
                     // Full update with real status data — merge in
-                    setGitStatuses((current) => ({ ...current, ...incomingStatuses }));
+                    setGitStatuses((current) => {
+                        const changed = Object.entries(incomingStatuses)
+                            .some(([id, status]) => !sameGitStatus(current[id], status));
+                        return changed ? { ...current, ...incomingStatuses } : current;
+                    });
                     Object.entries(incomingStatuses).forEach(([id, s]) => {
                         if (s.isGitRepo) knownGitRepos.current.add(id);
                     });
                     // Mark all projects as no longer checking
-                    setCheckingIds(new Set());
+                    setCheckingIds((current) => current.size ? new Set() : current);
                 } else {
                     // Flash message (empty statuses) — background fetch starting.
                     // Only mark projects that have no cached status yet as "checking".
                     // Known projects keep their existing badges visible.
                     setCheckingIds((currentChecking) => {
                         const next = new Set(currentChecking);
+                        let changed = false;
                         // Add only projects we have no data for yet
                         msg.projects.forEach((p) => {
                             if (!knownGitRepos.current.has(p.id)) {
                                 next.add(p.id);
+                                changed = changed || !currentChecking.has(p.id);
                             }
                         });
-                        return next;
+                        return changed ? next : currentChecking;
                     });
                 }
 
@@ -130,6 +156,7 @@ function App() {
         const activeProjectId = state.activeProjectId;
         if (!activeProjectId) return;
         const interval = window.setInterval(() => {
+            if (document.hidden) return;
             if (Object.keys(pendingProjects).length > 0) return;
             getVscode()?.postMessage({
                 type: 'refreshProjects' satisfies GitPanelOutboundMessage['type'],
