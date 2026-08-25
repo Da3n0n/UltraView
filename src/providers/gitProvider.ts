@@ -4097,6 +4097,13 @@ export class GitProvider implements vscode.WebviewViewProvider {
             const cloneDestPath = cloneDestUri[0].fsPath;
             const cloneFullPath = require('path').join(cloneDestPath, safeCloneName);
 
+            if (require('fs').existsSync(cloneFullPath)) {
+                vscode.window.showErrorMessage(
+                    `The destination already exists: ${cloneFullPath}. Choose a different repository name or remove the leftover folder before retrying.`
+                );
+                return;
+            }
+
             if (accWithToken.provider !== 'github' && accWithToken.provider !== 'gitlab') {
                 vscode.window.showInformationMessage(
                     'Creating repos is currently supported for GitHub and GitLab only.'
