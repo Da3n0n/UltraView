@@ -33,12 +33,14 @@ function getVscode(): { postMessage: (msg: Record<string, unknown>) => void } {
 }
 
 const STORAGE_KEY = 'ultraview.drawings.editorState';
+const AUTO_SAVE_DELAY_MS = 500;
 
 let currentDrawingId: string | null = null;
 let lastSavedContent: string | null = null;
 let currentStore: ReturnType<typeof createTLStore> | null = null;
 let reactRoot: ReturnType<typeof ReactDOM.createRoot> | null = null;
 let stopListeningToCurrentStore: (() => void) | null = null;
+let pendingAutoSave: ReturnType<typeof setTimeout> | null = null;
 const deletingDrawingIds = new Set<string>();
 
 function upsertDrawing(drawings: SyncDrawing[], drawing: SyncDrawing): SyncDrawing[] {
@@ -101,10 +103,22 @@ function isDarkMode(): boolean {
 }
 
 function scheduleAutoSave(drawingId: string, store: ReturnType<typeof createTLStore>): void {
-  flushSave(drawingId, store);
+  if (pendingAutoSave) clearTimeout(pendingAutoSave);
+  pendingAutoSave = setTimeout(() => {
+    pendingAutoSave = null;
+    // A tab switch can leave an old store's timer queued. Never let that timer
+    // overwrite the newly active drawing.
+    if (drawingId === currentDrawingId && store === currentStore) {
+      flushSave(drawingId, store);
+    }
+  }, AUTO_SAVE_DELAY_MS);
 }
 
 function flushSave(drawingId: string, store: ReturnType<typeof createTLStore>): void {
+  if (pendingAutoSave) {
+    clearTimeout(pendingAutoSave);
+    pendingAutoSave = null;
+  }
   if (!store) return;
   try {
     const content = JSON.stringify(getSnapshot(store));
@@ -168,6 +182,10 @@ function deleteDrawingFromTabs(id: string): void {
     : appState.activeDrawingId;
 
   if (currentDrawingId === id) {
+    if (pendingAutoSave) {
+      clearTimeout(pendingAutoSave);
+      pendingAutoSave = null;
+    }
     stopListeningToCurrentStore?.();
     stopListeningToCurrentStore = null;
     currentStore = null;
@@ -219,6 +237,10 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
     style.textContent = `
       :root {
         --bg: var(--vscode-editor-background);
+        /* Keep the high-frequency drawing surface out of the native Acrylic
+           composition path. A transparent full-window canvas makes Windows
+           recompose the desktop for every pen/pointer frame. */
+        --drawing-canvas-background:#1e1e1e;
         --surface: var(--vscode-sideBar-background, var(--vscode-editor-background));
         --surface2: var(--vscode-list-hoverBackground, rgba(255,255,255,.05));
         --border: var(--vscode-panel-border, rgba(128,128,128,.24));
@@ -227,6 +249,10 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         --accent: var(--vscode-button-background, var(--vscode-textLink-foreground, #6ee7b7));
         --accent-text: var(--vscode-button-foreground, #ffffff);
         --scrollbar: var(--vscode-scrollbarSlider-background, rgba(100,100,100,.4));
+      }
+      body.vscode-light,
+      body.vscode-high-contrast-light {
+        --drawing-canvas-background:#ffffff;
       }
       .drawings-root {
         display:flex;
@@ -411,7 +437,7 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         flex:1;
         position:relative;
         overflow:hidden;
-        background:var(--vscode-editor-background);
+        background:var(--drawing-canvas-background);
       }
       .drawings-main.empty {
         background:
@@ -419,8 +445,8 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
           var(--vscode-editor-background);
       }
       #tldraw-container { width:100%; height:100%; }
-      .tl-container { background: var(--vscode-editor-background) !important; }
-      .tl-background { background: var(--vscode-editor-background) !important; }
+      .tl-container { background: var(--drawing-canvas-background) !important; }
+      .tl-background { background: var(--drawing-canvas-background) !important; }
       .tl-grid-dot { fill: var(--border) !important; }
       .tlui-layout {
         --tl-color-panel: var(--surface) !important;
@@ -432,7 +458,7 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         --tl-color-text-3: var(--muted) !important;
         --tl-color-primary: var(--accent) !important;
         --tl-color-selected: color-mix(in srgb, var(--accent) 24%, transparent) !important;
-        --tl-color-background: var(--vscode-editor-background) !important;
+        --tl-color-background: var(--drawing-canvas-background) !important;
       }
       .tl-header {
         background: color-mix(in srgb, var(--surface) 94%, transparent) !important;
@@ -650,7 +676,7 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
     const drawingId = state.activeDrawingId;
     stopListeningToCurrentStore = newStore.listen(() => {
       scheduleAutoSave(drawingId, newStore);
-    });
+    }, { source: 'user', scope: 'document' });
   }
 
   const addMenu = document.getElementById('add-menu');
@@ -793,6 +819,12 @@ window.addEventListener('message', (event: MessageEvent) => {
       drawings: upsertDrawing(appState.drawings, drawing),
     };
   }
+});
+
+// Do not lose the final half-second of edits when the webview is hidden,
+// reloaded, or closed before the debounce expires.
+window.addEventListener('pagehide', () => {
+  if (currentStore && currentDrawingId) flushSave(currentDrawingId, currentStore);
 });
 
 const loadingEl = document.getElementById('loading');
