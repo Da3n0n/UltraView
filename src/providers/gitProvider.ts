@@ -668,7 +668,7 @@ async function getProjectLocalStatus(
         // One porcelain call both verifies the repository and returns its
         // branch plus working-tree changes. This replaces three Git process
         // launches per project on every panel refresh.
-        const { stdout } = await run('git status --porcelain=v1 --branch');
+        const { stdout } = await run('git --no-optional-locks status --porcelain=v1 --branch');
         const lines = stdout.replace(/\r/g, '').split('\n').filter(Boolean);
         const header = lines[0]?.startsWith('## ') ? lines[0].slice(3) : '';
         let branch = header.split('...')[0];
@@ -1647,10 +1647,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
     /** Cached S3 credential check result to avoid repeated keychain reads */
     private _s3CredsCached: boolean | null = null;
     private _s3CredsCachedAt = 0;
-    /** File system watcher for the active workspace folder (fast local change detection) */
-    private _fsWatcher?: vscode.FileSystemWatcher;
-    /** Debounce timer for the file system watcher */
-    private _fsWatcherDebounce?: NodeJS.Timeout;
+    /** Lightweight native watchers provide instant local badges for every saved project. */
+    private _projectWatchers = new Map<string, { projectPath: string; watcher: fs.FSWatcher }>();
+    private _dirtyProjectIds = new Set<string>();
+    private _projectWatcherDebounce?: NodeJS.Timeout;
     constructor(context: vscode.ExtensionContext, store: SharedStore) {
         this.context = context;
         this.store = store;
@@ -1913,10 +1913,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        // Watch the active workspace folder for file changes and update the open project instantly.
-        this._setupFsWatcher();
-        // Re-create watcher if the workspace changes (folder added/removed).
-        vscode.workspace.onDidChangeWorkspaceFolders(() => this._setupFsWatcher());
+        webviewView.onDidDispose(() => this._disposeProjectWatchers());
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.type) {
@@ -2355,6 +2352,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
             .listProjects()
             .slice()
             .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+        this._syncProjectWatchers(projects);
         const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
         const activeProject = projects.find((project) => project.path === activeRepo);
         const accounts = this.accounts.listAccounts();
@@ -2385,6 +2383,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
             .listProjects()
             .slice()
             .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+        this._syncProjectWatchers(projects);
         const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
         const accounts = this.accounts.listAccounts();
 
@@ -2463,45 +2462,74 @@ export class GitProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    /** Set up (or re-create) a file system watcher on the active workspace folder.
-     *  When any file changes, the open project's local status is refreshed immediately. */
-    private _setupFsWatcher(): void {
-        // Dispose any previous watcher
-        if (this._fsWatcher) {
-            this._fsWatcher.dispose();
-            this._fsWatcher = undefined;
+    /** Keep one OS watcher per saved project. Events are cheap; Git status only
+     *  runs after a short quiet period and only for repositories that changed. */
+    private _syncProjectWatchers(projects: Array<{ id: string; path: string }>): void {
+        const wantedIds = new Set(projects.map((project) => project.id));
+        for (const [projectId, entry] of this._projectWatchers) {
+            const project = projects.find((candidate) => candidate.id === projectId);
+            if (!wantedIds.has(projectId) || project?.path !== entry.projectPath) {
+                entry.watcher.close();
+                this._projectWatchers.delete(projectId);
+            }
         }
-        const activeFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!activeFolder) return;
 
-        // Watch source files only — exclude build artefacts and package dirs
-        // to avoid a massive event stream from npm install / build runs.
-        this._fsWatcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(activeFolder, '{**/*.ts,**/*.tsx,**/*.js,**/*.jsx,**/*.py,**/*.go,**/*.rs,**/*.java,**/*.cs,**/*.html,**/*.css,**/*.json,**/*.md,**/*.env}'),
-            false, false, false
-        );
+        for (const project of projects) {
+            if (this._projectWatchers.has(project.id) || !project.path) continue;
+            try {
+                const watcher = fs.watch(project.path, { recursive: true }, (_event, filename) => {
+                    const relativePath = filename?.toString().replace(/\\/g, '/').toLowerCase() ?? '';
+                    if (this._ignoreProjectWatchEvent(relativePath)) return;
+                    this._queueProjectStatusRefresh(project.id);
+                });
+                watcher.on('error', () => {
+                    watcher.close();
+                    this._projectWatchers.delete(project.id);
+                });
+                this._projectWatchers.set(project.id, { projectPath: project.path, watcher });
+            } catch {
+                // Missing, inaccessible, or unsupported paths still update through
+                // the normal manual/30-second refresh path.
+            }
+        }
+    }
 
-        const onFileEvent = () => {
-            if (!this.view?.visible) return;
-            // Debounce: wait 400 ms of quiet before firing so rapid saves don't flood
-            if (this._fsWatcherDebounce) clearTimeout(this._fsWatcherDebounce);
-            this._fsWatcherDebounce = setTimeout(() => {
-                const activeRepo = activeFolder.uri.fsPath;
-                const project = this.manager.getProjectByPath(activeRepo);
-                if (project) {
-                    this._postLocalProjectState(project.id);
-                }
-            }, 400);
-        };
+    private _ignoreProjectWatchEvent(relativePath: string): boolean {
+        if (!relativePath) return false;
+        const noisyDirectory = /(^|\/)(node_modules|dist|out|build|target|coverage|\.next|\.cache)(\/|$)/;
+        if (noisyDirectory.test(relativePath)) return true;
+        if (!relativePath.startsWith('.git/')) return false;
+        return relativePath !== '.git/index'
+            && relativePath !== '.git/head'
+            && relativePath !== '.git/packed-refs'
+            && !relativePath.startsWith('.git/refs/');
+    }
 
-        this._fsWatcher.onDidCreate(onFileEvent);
-        this._fsWatcher.onDidChange(onFileEvent);
-        this._fsWatcher.onDidDelete(onFileEvent);
+    private _queueProjectStatusRefresh(projectId: string): void {
+        if (!this.view?.visible) return;
+        this._dirtyProjectIds.add(projectId);
+        if (this._projectWatcherDebounce) clearTimeout(this._projectWatcherDebounce);
+        this._projectWatcherDebounce = setTimeout(() => {
+            this._projectWatcherDebounce = undefined;
+            const projectIds = [...this._dirtyProjectIds];
+            this._dirtyProjectIds.clear();
+            void (async () => {
+                for (const id of projectIds) await this._postLocalProjectState(id);
+            })();
+        }, 350);
+    }
+
+    private _disposeProjectWatchers(): void {
+        for (const entry of this._projectWatchers.values()) entry.watcher.close();
+        this._projectWatchers.clear();
+        this._dirtyProjectIds.clear();
+        if (this._projectWatcherDebounce) clearTimeout(this._projectWatcherDebounce);
+        this._projectWatcherDebounce = undefined;
     }
 
     /** Fast local-only update for a single project (no git fetch — just branch + localChanges). */
     public async _postLocalProjectState(projectId: string): Promise<void> {
-        if (!this.view) return;
+        if (!this.view?.visible) return;
         const refreshSeq = ++this._statusRefreshSeq;
         const projects = this.manager
             .listProjects()
