@@ -25,6 +25,7 @@ interface GitStatus {
 type GitConflictStrategy = 'ours' | 'theirs';
 type GitCommandRunner = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
 const projectGitOpLocks = new Set<string>();
+const legacyRewriteCheckedProjects = new Set<string>();
 
 function projectLockKey(projectPath: string): string {
     const resolved = path.resolve(projectPath);
@@ -54,7 +55,7 @@ async function acquireProjectGitLock(projectPath: string): Promise<() => void> {
     }
 
     const lockPath = path.join(gitEntry, 'ultraview-sync.lock');
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 5_000;
     while (true) {
         try {
             const handle = fs.openSync(lockPath, 'wx');
@@ -66,17 +67,46 @@ async function acquireProjectGitLock(projectPath: string): Promise<() => void> {
         } catch (err: any) {
             if (err?.code !== 'EEXIST') throw err;
             try {
+                const lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as {
+                    pid?: number;
+                    startedAt?: number;
+                };
                 const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-                if (age > 10 * 60_000) {
+                const ownerPid = Number(lockData.pid);
+                // Extension-host reloads can leave a lock owned by this same
+                // process after the in-memory operation set has been reset.
+                // A closed/crashed IDE leaves a PID that no longer exists.
+                if (ownerPid === process.pid || !isProcessRunning(ownerPid) || age > 10 * 60_000) {
                     fs.unlinkSync(lockPath);
                     continue;
                 }
-            } catch { /* lock disappeared between checks */ }
-            if (Date.now() >= deadline) {
-                throw new Error('Another IDE is still syncing this local project. Try again when it finishes.');
+            } catch (lockErr: any) {
+                // If the lock vanished, retry immediately. Invalid partial lock
+                // files are safe to recover once they are no longer brand new.
+                if (lockErr?.code === 'ENOENT') continue;
+                try {
+                    if (Date.now() - fs.statSync(lockPath).mtimeMs > 5_000) {
+                        fs.unlinkSync(lockPath);
+                        continue;
+                    }
+                } catch { continue; }
             }
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            if (Date.now() >= deadline) {
+                throw new Error('Another running IDE is actively syncing this project. Try again in a moment.');
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
         }
+    }
+}
+
+function isProcessRunning(pid: number): boolean {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch (err: any) {
+        // EPERM means the process exists but belongs to another security context.
+        return err?.code === 'EPERM';
     }
 }
 
@@ -361,6 +391,8 @@ async function removeLegacyRewriteArtifacts(
     projectPath: string,
     run: GitCommandRunner
 ): Promise<boolean> {
+    const projectKey = projectLockKey(projectPath);
+    if (legacyRewriteCheckedProjects.has(projectKey)) return false;
     let changed = false;
     const rewriteDir = path.resolve(projectPath, '.git-rewrite');
     if (path.dirname(rewriteDir) !== path.resolve(projectPath)) {
@@ -418,13 +450,17 @@ async function removeLegacyRewriteArtifacts(
         }
     } catch { /* no legacy ignore block */ }
 
+    legacyRewriteCheckedProjects.add(projectKey);
     return changed;
 }
 
 async function commitStagedChanges(run: GitCommandRunner, tmpFile: string): Promise<void> {
     const commitFile = `"${tmpFile.replace(/\\/g, '/')}"`;
     try {
-        await run(`git commit -F ${commitFile}`);
+        // Sync is unattended: avoid editor/signing prompts and hooks that can
+        // hold the button indefinitely. The same bypass was already used as
+        // the fallback, so make the reliable path the fast path.
+        await run(`git -c commit.gpgSign=false commit --no-verify -F ${commitFile}`);
     } catch (err: any) {
         // Hooks and local signing settings should not prevent Ultraview from
         // syncing otherwise valid staged files.
@@ -484,20 +520,25 @@ async function recoverInterruptedGitState(
     const run = createGitRunner(projectPath);
     const notes: string[] = [];
 
-    const abortSteps: Array<{ label: string; cmd: string }> = [
-        { label: 'merge', cmd: 'git merge --abort' },
-        { label: 'rebase', cmd: 'git rebase --abort' },
-        { label: 'cherry-pick', cmd: 'git cherry-pick --abort' },
-        { label: 'revert', cmd: 'git revert --abort' },
+    let gitDir = path.join(projectPath, '.git');
+    try {
+        const { stdout } = await run('git rev-parse --git-dir');
+        gitDir = path.resolve(projectPath, stdout.trim());
+    } catch { /* use normal .git location */ }
+
+    const abortSteps: Array<{ label: string; cmd: string; markers: string[] }> = [
+        { label: 'merge', cmd: 'git merge --abort', markers: ['MERGE_HEAD'] },
+        { label: 'rebase', cmd: 'git rebase --abort', markers: ['rebase-merge', 'rebase-apply'] },
+        { label: 'cherry-pick', cmd: 'git cherry-pick --abort', markers: ['CHERRY_PICK_HEAD'] },
+        { label: 'revert', cmd: 'git revert --abort', markers: ['REVERT_HEAD'] },
     ];
 
     for (const step of abortSteps) {
+        if (!step.markers.some((marker) => fs.existsSync(path.join(gitDir, marker)))) continue;
         if (await tryGit(run, step.cmd)) {
             notes.push(`aborted stale ${step.label}`);
         }
     }
-
-    await tryGit(run, 'git reset --merge');
 
     const unmerged = await listUnmergedFiles(run);
     if (!unmerged.length) {
@@ -523,13 +564,16 @@ async function recoverInterruptedGitState(
 async function mergeRemoteBranch(
     projectPath: string,
     branch: string,
-    strategy: GitConflictStrategy
+    strategy: GitConflictStrategy,
+    alreadyFetched = false
 ): Promise<string[]> {
     const run = createGitRunner(projectPath);
     const notes: string[] = [];
 
-    // Fetch with auto-redirect on "Repository moved" (up to 3 attempts)
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    // Fetch with auto-redirect on "Repository moved" (up to 3 attempts).
+    // Sync's direction check has already fetched, so do not repeat that
+    // network round trip on its normal behind/diverged path.
+    for (let attempt = 1; !alreadyFetched && attempt <= 3; attempt++) {
         try {
             await withTransientRetry(
                 () => run(`git fetch --quiet origin ${branch}`),
@@ -1312,7 +1356,8 @@ async function getSyncDirection(
         try {
             await withTransientRetry(
                 () => run('git fetch --quiet --prune --tags origin'),
-                'fetch'
+                'fetch',
+                2
             );
             break;
         } catch (fetchErr: any) {
@@ -1465,23 +1510,6 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
         }
     }
 
-    // ── pre-flight: probe the remote for redirects BEFORE doing any work ────
-    // A redirect discovered here (e.g. UnrealSync → /Vizualflow/UnrealSync)
-    // is fixed up-front so every subsequent fetch/pull/push uses the new
-    // location and we never surface a confusing "moved" error mid-flow.
-    try {
-        const { stdout, stderr } = await run('git ls-remote --heads origin HEAD');
-        const combined = `${stdout || ''}\n${stderr || ''}`;
-        const moved = parseMovedRepository(combined);
-        if (moved) {
-            const newUrl = await rewriteOriginRemote(projectPath, moved, run);
-            console.log(`[Ultraview] pre-flight: origin redirected to ${newUrl}`);
-        }
-    } catch {
-        /* offline / no remote yet — fall through, the per-step recovery will
-           handle the moved hint if it appears later */
-    }
-
     // ── fetch + compute divergence ───────────────────────────────────────────
     let ahead = 0;
     let behind = 0;
@@ -1500,7 +1528,7 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
 
     // ── merge remote changes if needed ──────────────────────────────────────
     if (diverged || behind > 0) {
-        await mergeRemoteBranch(projectPath, branch, 'ours');
+        await mergeRemoteBranch(projectPath, branch, 'ours', true);
     }
 
     // ── push ─────────────────────────────────────────────────────────────────
@@ -1514,12 +1542,13 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     let pushDone = false;
     let lastPushErr: any;
     let redirectedDuringPush = false;
-    while (!pushDone && pushAttempts < 8) {
+    while (!pushDone && pushAttempts < 4) {
         pushAttempts++;
         try {
             await withTransientRetry(
                 () => run(`git push -u origin ${branch}`),
-                'sync-push'
+                'sync-push',
+                2
             );
             pushDone = true;
         } catch (pushErr: any) {
@@ -2188,13 +2217,16 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 case 'gitPush': {
                     const project = this.manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
+                        let pushSucceeded = false;
                         try {
                             const result = await runExclusiveProjectGitOp(project.path, () =>
                                 gitPush(project.path, msg.commitMsg)
                             );
+                            pushSucceeded = true;
                             vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                         } catch (err: any) {
                             const errMsg = err.message || 'Unknown error';
+                            let showedSpecificError = false;
                             if (/workflow/i.test(errMsg) && /scope/i.test(errMsg) && project.accountId) {
                                 const acc = this.accounts.getAccount(project.accountId);
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
@@ -2216,21 +2248,19 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                             this.postState();
                                         }
                                     });
-                                    return; // Don't show default error yet, notification handles it
+                                    showedSpecificError = true;
                                 }
                             }
-                            vscode.window.showErrorMessage(
-                                `Push failed for ${project.name}: ${errMsg}`
-                            );
+                            if (!showedSpecificError) {
+                                vscode.window.showErrorMessage(
+                                    `Push failed for ${project.name}: ${errMsg}`
+                                );
+                            }
                         }
                         // Notify other IDEs that a git operation completed
                         this.store.write({ lastSyncAt: Date.now() });
-                        // Invalidate cached status so the post-op badge reflects
-                        // the real remote state, not the pre-op cached one.
-                        delete this._cachedGitStatuses[project.id];
-                        delete this._remoteStatusCheckedAt[project.id];
                         try {
-                            await this._postSingleProjectState(project.id);
+                            await this._postLocalProjectState(project.id, pushSucceeded);
                         } finally {
                             notifyGitOpDone(this.view?.webview, project.id);
                         }
@@ -2257,10 +2287,12 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 case 'gitSync': {
                     const project = this.manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
+                        let syncSucceeded = false;
                         try {
                             await runExclusiveProjectGitOp(project.path, async () => {
                                 try {
                                     const result = await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
+                                    syncSucceeded = true;
                                     vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                                 } catch (err: any) {
                                     if (err?.code !== 'NO_REMOTE') throw err;
@@ -2271,12 +2303,14 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                     if (picked) {
                                         // Retry sync now that remote is set up
                                         const result = await gitSyncAll(project.path, msg.commitMsg, picked);
+                                        syncSucceeded = true;
                                         vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                                     }
                                 }
                             });
                         } catch (err: any) {
                             const errMsg = err.message || 'Unknown error';
+                            let showedSpecificError = false;
                             if (/workflow/i.test(errMsg) && /scope/i.test(errMsg) && project.accountId) {
                                 const acc = this.accounts.getAccount(project.accountId);
                                 if (acc && acc.authMethod === 'oauth' && acc.provider === 'github') {
@@ -2298,12 +2332,16 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                             this.postState();
                                         }
                                     });
-                                    return; // Don't show default error yet, notification handles it
+                                    showedSpecificError = true;
+                                    // Continue into completion cleanup so the button
+                                    // cannot remain stuck in Syncing state.
                                 }
                             }
-                            vscode.window.showErrorMessage(
-                                `Sync failed for ${project.name}: ${errMsg}`
-                            );
+                            if (!showedSpecificError) {
+                                vscode.window.showErrorMessage(
+                                    `Sync failed for ${project.name}: ${errMsg}`
+                                );
+                            }
                         }
                         this.store.write({ lastSyncAt: Date.now() });
                         // Invalidate the cached status so the post-sync fetch
@@ -2314,7 +2352,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                         delete this._cachedGitStatuses[project.id];
                         delete this._remoteStatusCheckedAt[project.id];
                         try {
-                            await this._postSingleProjectState(project.id);
+                            await this._postLocalProjectState(project.id, syncSucceeded);
                         } finally {
                             notifyGitOpDone(this.view?.webview, project.id);
                         }
@@ -2528,7 +2566,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
     }
 
     /** Fast local-only update for a single project (no git fetch — just branch + localChanges). */
-    public async _postLocalProjectState(projectId: string): Promise<void> {
+    public async _postLocalProjectState(projectId: string, assumeSynced = false): Promise<void> {
         if (!this.view?.visible) return;
         const refreshSeq = ++this._statusRefreshSeq;
         const projects = this.manager
@@ -2549,7 +2587,14 @@ export class GitProvider implements vscode.WebviewViewProvider {
         const hasBackupBucket = await this._hasBackupBucket();
         const project = projects.find((p) => p.id === projectId);
         if (!project) return;
-        const localStatus = await getProjectLocalStatus(project.path, this._cachedGitStatuses[project.id]);
+        const previousStatus = assumeSynced
+            ? { ...this._cachedGitStatuses[project.id], ahead: 0, behind: 0 } as GitStatus
+            : this._cachedGitStatuses[project.id];
+        const localStatus = await getProjectLocalStatus(project.path, previousStatus);
+        if (assumeSynced) {
+            localStatus.ahead = 0;
+            localStatus.behind = 0;
+        }
         if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
         this._cachedGitStatuses = { ...this._cachedGitStatuses, [project.id]: localStatus };
         this.view.webview.postMessage({
@@ -2984,7 +3029,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
         const accounts = new GitAccounts(context, store);
         let panelStatusRefreshSeq = 0;
 
-        const postPanelState = async () => {
+        const postPanelState = async (localOnlyProjectId?: string, assumeSynced = false) => {
             const refreshSeq = ++panelStatusRefreshSeq;
             const projects = manager.listProjects();
             const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
@@ -3017,6 +3062,22 @@ export class GitProvider implements vscode.WebviewViewProvider {
 
             // Send state immediately so the list updates instantly
             panel.webview.postMessage(buildMsg({}));
+
+            if (localOnlyProjectId) {
+                const project = projects.find((candidate) => candidate.id === localOnlyProjectId);
+                if (!project) return;
+                const status = await getProjectLocalStatus(project.path);
+                if (assumeSynced) {
+                    status.ahead = 0;
+                    status.behind = 0;
+                }
+                if (refreshSeq !== panelStatusRefreshSeq) return;
+                panel.webview.postMessage({
+                    ...buildMsg({ [project.id]: status }),
+                    onlyProjectId: project.id,
+                });
+                return;
+            }
 
             // Then fetch git statuses in background and send again
             const gitStatuses: Record<string, GitStatus> = {};
@@ -3624,10 +3685,12 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 case 'gitPush': {
                     const project = manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
+                        let pushSucceeded = false;
                         try {
                             const result = await runExclusiveProjectGitOp(project.path, () =>
                                 gitPush(project.path, msg.commitMsg)
                             );
+                            pushSucceeded = true;
                             vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                         } catch (err: any) {
                             vscode.window.showErrorMessage(
@@ -3635,7 +3698,8 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             );
                         }
                         try {
-                            await postPanelState();
+                            if (pushSucceeded) await postPanelState(project.id, true);
+                            else void postPanelState();
                         } finally {
                             notifyGitOpDone(panel.webview, project.id);
                         }
@@ -3645,10 +3709,12 @@ export class GitProvider implements vscode.WebviewViewProvider {
                 case 'gitSync': {
                     const project = manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
+                        let syncSucceeded = false;
                         try {
                             await runExclusiveProjectGitOp(project.path, async () => {
                                 try {
                                     await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
+                                    syncSucceeded = true;
                                 } catch (err: any) {
                                     if (err?.code !== 'NO_REMOTE') throw err;
                                     const picked = await promptAndAddRemotePanel(
@@ -3656,14 +3722,18 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                     );
                                     if (picked) {
                                         await gitSyncAll(project.path, msg.commitMsg, picked);
+                                        syncSucceeded = true;
                                     }
                                 }
                             });
-                        } catch {
-                            /* handled above */
+                        } catch (err: any) {
+                            vscode.window.showErrorMessage(
+                                `Sync failed for ${project.name}: ${err?.message ?? String(err)}`
+                            );
                         }
                         try {
-                            await postPanelState();
+                            if (syncSucceeded) await postPanelState(project.id, true);
+                            else void postPanelState();
                         } finally {
                             notifyGitOpDone(panel.webview, project.id);
                         }
