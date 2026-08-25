@@ -237,10 +237,6 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
     style.textContent = `
       :root {
         --bg: var(--vscode-editor-background);
-        /* Keep the high-frequency drawing surface out of the native Acrylic
-           composition path. A transparent full-window canvas makes Windows
-           recompose the desktop for every pen/pointer frame. */
-        --drawing-canvas-background:#1e1e1e;
         --surface: var(--vscode-sideBar-background, var(--vscode-editor-background));
         --surface2: var(--vscode-list-hoverBackground, rgba(255,255,255,.05));
         --border: var(--vscode-panel-border, rgba(128,128,128,.24));
@@ -249,10 +245,6 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         --accent: var(--vscode-button-background, var(--vscode-textLink-foreground, #6ee7b7));
         --accent-text: var(--vscode-button-foreground, #ffffff);
         --scrollbar: var(--vscode-scrollbarSlider-background, rgba(100,100,100,.4));
-      }
-      body.vscode-light,
-      body.vscode-high-contrast-light {
-        --drawing-canvas-background:#ffffff;
       }
       .drawings-root {
         display:flex;
@@ -437,7 +429,7 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         flex:1;
         position:relative;
         overflow:hidden;
-        background:var(--drawing-canvas-background);
+        background:var(--vscode-editor-background);
       }
       .drawings-main.empty {
         background:
@@ -445,8 +437,8 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
           var(--vscode-editor-background);
       }
       #tldraw-container { width:100%; height:100%; }
-      .tl-container { background: var(--drawing-canvas-background) !important; }
-      .tl-background { background: var(--drawing-canvas-background) !important; }
+      .tl-container { background: var(--vscode-editor-background) !important; }
+      .tl-background { background: var(--vscode-editor-background) !important; }
       .tl-grid-dot { fill: var(--border) !important; }
       .tlui-layout {
         --tl-color-panel: var(--surface) !important;
@@ -458,7 +450,7 @@ function renderApp(state: AppState, setState: (s: Partial<AppState>) => void): v
         --tl-color-text-3: var(--muted) !important;
         --tl-color-primary: var(--accent) !important;
         --tl-color-selected: color-mix(in srgb, var(--accent) 24%, transparent) !important;
-        --tl-color-background: var(--drawing-canvas-background) !important;
+        --tl-color-background: var(--vscode-editor-background) !important;
       }
       .tl-header {
         background: color-mix(in srgb, var(--surface) 94%, transparent) !important;
