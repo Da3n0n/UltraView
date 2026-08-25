@@ -4123,7 +4123,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                     `${accWithToken.username}:${accWithToken.token}`
                                 ).toString('base64');
                                 await execAsync(
-                                    `git -c http.extraHeader="Authorization: Basic ${b64}" clone "${rawUrl}" "${safeCloneName}"`,
+                                    `git -c http.extraHeader="Authorization: Basic ${b64}" clone --no-tags "${rawUrl}" "${safeCloneName}"`,
                                     { cwd: cloneDestPath, env: process.env }
                                 );
                                 cloned = true;
@@ -4132,27 +4132,19 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             }
                         }
                         if (!cloned) {
-                            await execAsync(`git clone "${rawUrl}" "${safeCloneName}"`, {
+                            await execAsync(`git clone --no-tags "${rawUrl}" "${safeCloneName}"`, {
                                 cwd: cloneDestPath,
                                 env: process.env,
                             });
                         }
 
-                        // ── 1b. Strip old git history — start fresh ───────────────────
-                        const nodePath2 = require('path') as typeof import('path');
-                        const nodeFs2 = require('fs') as typeof import('fs');
-                        const gitDir = nodePath2.join(cloneFullPath, '.git');
-                        nodeFs2.rmSync(gitDir, { recursive: true, force: true });
-                        await execAsync('git init', { cwd: cloneFullPath, env: process.env });
-                        await execAsync('git checkout -b main', {
-                            cwd: cloneFullPath,
-                            env: process.env,
-                        }).catch(() =>
-                            execAsync('git checkout -b master', {
-                                cwd: cloneFullPath,
-                                env: process.env,
-                            })
-                        );
+                        // ── 1b. Start fresh without deleting .git ────────────────────
+                        // Deleting a freshly cloned .git directory is unreliable on
+                        // Windows because Git, antivirus, or an indexer may still have
+                        // a handle open inside it. An orphan branch gives the imported
+                        // files a new root commit without exposing the source history.
+                        const importBranch = `__ultraview_import_${process.pid}_${Date.now()}`;
+                        await run(`git checkout --orphan "${importBranch}"`);
                         const noReplyHost2 =
                             accWithToken.provider === 'github'
                                 ? 'users.noreply.github.com'
@@ -4175,6 +4167,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             cwd: cloneFullPath,
                             env: process.env,
                         });
+                        await run('git branch -M main');
+                        // Remove the source URL and its remote-tracking refs. The old
+                        // objects are now unreachable and will be pruned by Git.
+                        await run('git remote remove origin');
 
                         // ── 2. Create new remote repo on provider ─────────────────────
                         let newRemoteUrl = '';
