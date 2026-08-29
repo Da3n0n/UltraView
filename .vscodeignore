@@ -2,6 +2,8 @@
 .git-rewrite/**
 node_modules/**
 vendor/**
+resources/gitnexus-runtime/**
+resources/.gitnexus-runtime-staging/**
 .gitmodules
 src/**
 .gitignore

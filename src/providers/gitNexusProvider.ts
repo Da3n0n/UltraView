@@ -93,11 +93,11 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
             processes: [],
         };
         if (selected) {
-            const [graph, clusters, processes] = await Promise.all([
-                this.runtime.client.graph(selected),
-                this.runtime.client.clusters(selected).catch(() => []),
-                this.runtime.client.processes(selected).catch(() => []),
-            ]);
+            // LadybugDB may briefly checkpoint after startup/indexing. Keep the
+            // initial reads sequential so three read-only opens do not race it.
+            const graph = await this.runtime.client.graph(selected);
+            const clusters = await this.runtime.client.clusters(selected).catch(() => []);
+            const processes = await this.runtime.client.processes(selected).catch(() => []);
             snapshot = { ...snapshot, graph, clusters, processes };
         }
         await webview.postMessage({ type: 'snapshot', snapshot, status: await this.runtime.status() });

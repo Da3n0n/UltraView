@@ -11,10 +11,6 @@ function shellQuote(value: string): string {
     return `"${value.replace(/"/g, '\\"')}"`;
 }
 
-function quoteForCommandPrompt(value: string): string {
-    return /^[A-Za-z0-9_@./:=+-]+$/.test(value) ? value : `"${value.replace(/"/g, '""')}"`;
-}
-
 function validNodeVersion(raw: string): boolean {
     const match = raw.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
     if (!match) return false;
@@ -62,7 +58,7 @@ export class GitNexusRuntime implements vscode.Disposable {
                 managed: false,
                 installing: Boolean(this.installing),
                 port: this.port,
-                message: this.installing ? 'Installing local GitNexus runtime…' : 'Local server is stopped',
+                message: this.installing ? 'Preparing bundled GitNexus runtime…' : 'Local server is stopped',
             };
         }
     }
@@ -71,9 +67,7 @@ export class GitNexusRuntime implements vscode.Disposable {
         const configured = vscode.workspace.getConfiguration('ultraview.gitNexus').get<string>('nodePath', '').trim();
         if (configured) return configured;
         const bundled = path.join(
-            this.context.extensionPath,
-            'resources',
-            'gitnexus-runtime',
+            this.extractedRuntimeRoot(),
             'node',
             process.platform === 'win32' ? 'node.exe' : 'node'
         );
@@ -97,7 +91,7 @@ export class GitNexusRuntime implements vscode.Disposable {
     private cliCandidates(): string[] {
         return [
             path.join(this.context.extensionPath, 'vendor', 'GitNexus', 'gitnexus', 'dist', 'cli', 'index.js'),
-            path.join(this.context.extensionPath, 'resources', 'gitnexus-runtime', 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
+            path.join(this.extractedRuntimeRoot(), 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
             path.join(this.context.globalStorageUri.fsPath, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
         ];
     }
@@ -106,41 +100,55 @@ export class GitNexusRuntime implements vscode.Disposable {
         return this.cliCandidates().find(candidate => fs.existsSync(candidate));
     }
 
-    private pinnedVersion(): string {
+    private runtimePin(): { version: string; commit: string } {
         const manifest = path.join(this.context.extensionPath, 'resources', 'gitnexus-version.json');
         try {
-            return String(JSON.parse(fs.readFileSync(manifest, 'utf8')).version);
+            const pin = JSON.parse(fs.readFileSync(manifest, 'utf8'));
+            return { version: String(pin.version), commit: String(pin.commit) };
         } catch {
-            return '1.6.10';
+            return { version: '1.6.10', commit: 'unknown' };
         }
+    }
+
+    private extractedRuntimeRoot(): string {
+        const pin = this.runtimePin();
+        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}`);
+    }
+
+    private runtimeArchive(): string {
+        return path.join(
+            this.context.extensionPath,
+            'resources',
+            `gitnexus-runtime-${process.platform}-${process.arch}.tar.gz`
+        );
     }
 
     async install(): Promise<string> {
         if (this.findCli()) return this.findCli()!;
         if (this.installing) return this.installing;
         this.installing = (async () => {
-            await this.assertNode();
             await fs.promises.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
-            const version = this.pinnedVersion();
+            const pin = this.runtimePin();
+            const archive = this.runtimeArchive();
+            if (!fs.existsSync(archive)) {
+                throw new Error('The bundled GitNexus runtime is missing. Reinstall Ultraview.');
+            }
+            const destination = this.extractedRuntimeRoot();
             this.output.show(true);
-            this.output.appendLine(`Installing gitnexus@${version} locally…`);
+            this.output.appendLine(`Preparing bundled GitNexus ${pin.version} for first use…`);
             this.changed.fire(await this.status());
+            await fs.promises.rm(destination, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+            await fs.promises.mkdir(destination, { recursive: true });
             await new Promise<void>((resolve, reject) => {
-                const npmArgs = [
-                    'install', '--prefix', this.context.globalStorageUri.fsPath,
-                    `gitnexus@${version}`, '--omit=dev', '--no-audit', '--no-fund',
-                ];
-                const child = process.platform === 'win32'
-                    ? spawn(['npm', ...npmArgs].map(quoteForCommandPrompt).join(' '), { windowsHide: true, shell: true })
-                    : spawn('npm', npmArgs, { windowsHide: true });
+                const child = spawn('tar', ['-xzf', archive, '-C', destination], { windowsHide: true });
                 child.stdout?.on('data', data => this.output.append(data.toString()));
                 child.stderr?.on('data', data => this.output.append(data.toString()));
                 child.once('error', reject);
-                child.once('exit', code => code === 0 ? resolve() : reject(new Error(`npm install exited with code ${code}`)));
+                child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Bundled runtime extraction exited with code ${code}`)));
             });
             const cli = this.findCli();
-            if (!cli) throw new Error('GitNexus installed, but its CLI could not be found.');
-            this.output.appendLine('GitNexus runtime is ready.');
+            if (!cli) throw new Error('The bundled GitNexus runtime was extracted, but its CLI could not be found.');
+            this.output.appendLine('Bundled GitNexus runtime is ready.');
             return cli;
         })();
         try {
@@ -153,8 +161,8 @@ export class GitNexusRuntime implements vscode.Disposable {
 
     async start(): Promise<void> {
         if ((await this.status()).running) return;
-        const node = await this.assertNode();
         const cli = this.findCli() ?? await this.install();
+        const node = await this.assertNode();
         this.output.appendLine(`Starting GitNexus at http://127.0.0.1:${this.port}`);
         this.process = spawn(node, [cli, 'serve', '--host', '127.0.0.1', '--port', String(this.port)], {
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath,
@@ -191,8 +199,8 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     private async terminalCommand(args: string[], name: string): Promise<void> {
-        const node = await this.assertNode();
         const cli = this.findCli() ?? await this.install();
+        const node = await this.assertNode();
         const terminal = vscode.window.createTerminal({
             name,
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri,

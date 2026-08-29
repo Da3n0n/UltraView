@@ -243,7 +243,24 @@ function buildNodeSnippet(filePath: string, meta: Record<string, unknown> | unde
   return meta;
 }
 
-async function buildGraph(includeFns: boolean): Promise<GraphData> {
+let cachedGraph: { workspace: string; data: GraphData } | undefined;
+let graphBuildInFlight: { workspace: string; promise: Promise<GraphData> } | undefined;
+
+async function buildGraph(includeFns: boolean, force = false): Promise<GraphData> {
+  const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+  if (!force && cachedGraph?.workspace === workspace) return cachedGraph.data;
+  if (graphBuildInFlight?.workspace === workspace) return graphBuildInFlight.promise;
+  const promise = buildGraphUncached(includeFns).then(data => {
+    cachedGraph = { workspace, data };
+    return data;
+  }).finally(() => {
+    if (graphBuildInFlight?.promise === promise) graphBuildInFlight = undefined;
+  });
+  graphBuildInFlight = { workspace, promise };
+  return promise;
+}
+
+async function buildGraphUncached(includeFns: boolean): Promise<GraphData> {
   // Use the new universal code graph builder
   const cg = await buildCodeGraph();
   const snippetCache = new Map<string, string[]>();
@@ -1796,10 +1813,11 @@ function getColors(): Record<string, string> {
 async function sendGraph(
   webview: vscode.Webview,
   showFns: boolean,
-  ctx: vscode.ExtensionContext
+  ctx: vscode.ExtensionContext,
+  force = false
 ): Promise<void> {
   try {
-    const data = await buildGraph(showFns);
+    const data = await buildGraph(showFns, force);
     const colors = getColors();
     const state = getProjectGraphState(ctx);
     webview.postMessage({

@@ -1,5 +1,14 @@
 {
     "workbench.browser.dataStorage": "workspace",
     "ultraview.dokploy.url": "https://admin.foundr.tech",
-    "deepscan.ignoreConfirmWarning": true
+    "deepscan.ignoreConfirmWarning": true,
+    "files.exclude": {
+        "vendor/GitNexus": true
+    },
+    "files.watcherExclude": {
+        "**/vendor/GitNexus/**": true
+    },
+    "search.exclude": {
+        "**/vendor/GitNexus/**": true
+    }
 }

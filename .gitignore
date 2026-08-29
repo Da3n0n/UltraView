@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 resources/gitnexus-runtime/
+resources/.gitnexus-runtime-staging/
+resources/gitnexus-runtime-*.tar.gz
+resources/gitnexus-runtime-archive.json
 
 # VSIX packages
 *.vsix

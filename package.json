@@ -299,6 +299,11 @@
                     "icon": "$(type-hierarchy)"
                 },
                 {
+                    "id": "ultraview-gitnexus",
+                    "title": "GitNexus",
+                    "icon": "images/gitnexus.svg"
+                },
+                {
                     "id": "ultraview-git",
                     "title": "Project Manager",
                     "icon": "images/git.svg"
@@ -332,12 +337,14 @@
                     "id": "ultraview.codeGraph",
                     "name": "Code Graph",
                     "icon": "$(type-hierarchy)"
-                },
+                }
+            ],
+            "ultraview-gitnexus": [
                 {
                     "type": "webview",
                     "id": "ultraview.gitNexus",
                     "name": "GitNexus",
-                    "icon": "$(references)"
+                    "icon": "images/gitnexus.svg"
                 }
             ],
             "ultraview-git": [

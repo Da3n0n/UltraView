@@ -71,7 +71,7 @@ function nestedRepositoryRoots(workspaceRoot: string): string[] {
 async function discoverWorkspaceFiles(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
   const pattern = new vscode.RelativePattern(workspaceFolder, '**/*');
   const exclude = '{**/node_modules/**,**/vendor/**,**/dist/**,**/.git/**,**/.gitnexus/**,**/out/**,**/.next/**,**/build/**}';
-  const discovered = await vscode.workspace.findFiles(pattern, exclude, 10000);
+  const discovered = await vscode.workspace.findFiles(pattern, exclude, 3000);
   const nestedRoots = nestedRepositoryRoots(workspaceFolder.uri.fsPath);
   if (nestedRoots.length === 0) return discovered;
   return discovered.filter(uri => {
