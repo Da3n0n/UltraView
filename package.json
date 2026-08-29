@@ -3,7 +3,7 @@
     "icon": "images/icon.png",
     "displayName": "Ultraview “ All in One VS Code Extension",
     "description": "All-in-one VS Code extension: database viewer, markdown editor, interactive code graph, per-project Git account manager with auto credentials, and seamless cross-IDE sync — zero setup.",
-    "version": "0.2.431",
+    "version": "0.2.432",
     "publisher": "Da3n0n",
     "engines": {
         "vscode": "^1.85.0"
@@ -771,7 +771,7 @@
         "url": "https://github.com/Da3n0n/UltraView.git"
     },
     "scripts": {
-        "vscode:prepublish": "npm run compile",
+        "vscode:prepublish": "npm run prepare:gitnexus-runtime && npm run compile",
         "compile": "webpack",
         "watch": "webpack --watch",
         "package": "npm run bump-and-package",
@@ -785,6 +785,7 @@
         "test:theme": "node scripts/validate-theme-roundtrip.js",
         "gitnexus": "node scripts/gitnexus.mjs",
         "setup:gitnexus": "node scripts/setup-gitnexus.mjs",
+        "prepare:gitnexus-runtime": "node scripts/prepare-gitnexus-runtime.mjs",
         "pull:gitnexus": "node scripts/update-gitnexus.mjs",
         "vsix": "vsce package --no-dependencies",
         "release": "git add -A && git diff --staged --quiet || git commit -m \"chore: pre-release\" && npm version minor && git push && git push --tags",

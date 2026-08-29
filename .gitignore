@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+resources/gitnexus-runtime/
 
 # VSIX packages
 *.vsix

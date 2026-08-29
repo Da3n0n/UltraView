@@ -50,6 +50,31 @@ function shouldSkipFile(fp: string, ext: string, baseName: string): boolean {
   return skipBaseNames.has(baseName.toLowerCase());
 }
 
+function nestedRepositoryRoots(workspaceRoot: string): string[] {
+  const modulesFile = path.join(workspaceRoot, '.gitmodules');
+  if (!fs.existsSync(modulesFile)) return [];
+  try {
+    const content = fs.readFileSync(modulesFile, 'utf8');
+    return Array.from(content.matchAll(/^\s*path\s*=\s*(.+?)\s*$/gm), match =>
+      path.resolve(workspaceRoot, match[1]).toLowerCase()
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function discoverWorkspaceFiles(workspaceFolder: vscode.WorkspaceFolder): Promise<vscode.Uri[]> {
+  const pattern = new vscode.RelativePattern(workspaceFolder, '**/*');
+  const exclude = '{**/node_modules/**,**/vendor/**,**/dist/**,**/.git/**,**/.gitnexus/**,**/out/**,**/.next/**,**/build/**}';
+  const discovered = await vscode.workspace.findFiles(pattern, exclude, 10000);
+  const nestedRoots = nestedRepositoryRoots(workspaceFolder.uri.fsPath);
+  if (nestedRoots.length === 0) return discovered;
+  return discovered.filter(uri => {
+    const candidate = path.resolve(uri.fsPath).toLowerCase();
+    return !nestedRoots.some(root => candidate === root || candidate.startsWith(root + path.sep));
+  });
+}
+
 export async function buildCodeGraphStreaming(
   onProgress: (progress: StreamProgress) => void
 ): Promise<CodeGraph> {
@@ -61,9 +86,7 @@ export async function buildCodeGraphStreaming(
 
   onProgress({ phase: 'discovering', nodes: [], edges: [] });
 
-  const pattern = new vscode.RelativePattern(wsFolders[0], '**/*');
-  const exclude = '{**/node_modules/**,**/dist/**,**/.git/**,**/out/**,**/.next/**,**/build/**}';
-  const uris = await vscode.workspace.findFiles(pattern, exclude, 10000);
+  const uris = await discoverWorkspaceFiles(wsFolders[0]);
   const allFiles = new Set(uris.map(u => u.fsPath));
 
   const allNodes: CodeNode[] = [];
@@ -223,15 +246,14 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
   const wsFolders = vscode.workspace.workspaceFolders;
   if (!wsFolders || wsFolders.length === 0) return { nodes: [], edges: [] };
 
-  const pattern = new vscode.RelativePattern(wsFolders[0], '**/*');
-  const exclude = '{**/node_modules/**,**/dist/**,**/.git/**,**/out/**,**/.next/**,**/build/**}';
-  const uris = await vscode.workspace.findFiles(pattern, exclude, 10000);
+  const uris = await discoverWorkspaceFiles(wsFolders[0]);
   const allFiles = new Set(uris.map(u => u.fsPath));
 
   const nodes: CodeNode[] = [];
   const edges: CodeEdge[] = [];
   const seen = new Set<string>();
 
+  let processedFiles = 0;
   for (const uri of uris) {
     const fp = uri.fsPath;
     const ext = path.extname(fp).toLowerCase();
@@ -269,6 +291,9 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
     const db = detectDb(fp);
     for (const n of db.nodes) if (!seen.has(n.id)) { nodes.push(n); seen.add(n.id); }
     edges.push(...db.edges);
+
+    processedFiles++;
+    if (processedFiles % 30 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   const edgeSet = new Set<string>();
@@ -288,6 +313,7 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
   // Cross-file call edges for all exported types
   const CALL_RE = /\b(\w+)\s*\(/g;
 
+  processedFiles = 0;
   for (const uri of uris) {
     const fp = uri.fsPath;
     const ext = path.extname(fp).toLowerCase();
@@ -329,6 +355,8 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
         dedupedEdges.push({ source: sourceId, target: targetId, kind: 'call' });
       }
     }
+    processedFiles++;
+    if (processedFiles % 30 === 0) await new Promise(resolve => setTimeout(resolve, 0));
   }
 
   return { nodes, edges: dedupedEdges };

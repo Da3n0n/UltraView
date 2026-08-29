@@ -11,6 +11,10 @@ function shellQuote(value: string): string {
     return `"${value.replace(/"/g, '\\"')}"`;
 }
 
+function quoteForCommandPrompt(value: string): string {
+    return /^[A-Za-z0-9_@./:=+-]+$/.test(value) ? value : `"${value.replace(/"/g, '""')}"`;
+}
+
 function validNodeVersion(raw: string): boolean {
     const match = raw.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
     if (!match) return false;
@@ -84,6 +88,7 @@ export class GitNexusRuntime implements vscode.Disposable {
     private cliCandidates(): string[] {
         return [
             path.join(this.context.extensionPath, 'vendor', 'GitNexus', 'gitnexus', 'dist', 'cli', 'index.js'),
+            path.join(this.context.extensionPath, 'resources', 'gitnexus-runtime', 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
             path.join(this.context.globalStorageUri.fsPath, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
         ];
     }
@@ -112,11 +117,13 @@ export class GitNexusRuntime implements vscode.Disposable {
             this.output.appendLine(`Installing gitnexus@${version} locally…`);
             this.changed.fire(await this.status());
             await new Promise<void>((resolve, reject) => {
-                const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-                const child = spawn(npm, [
+                const npmArgs = [
                     'install', '--prefix', this.context.globalStorageUri.fsPath,
                     `gitnexus@${version}`, '--omit=dev', '--no-audit', '--no-fund',
-                ], { windowsHide: true });
+                ];
+                const child = process.platform === 'win32'
+                    ? spawn(['npm', ...npmArgs].map(quoteForCommandPrompt).join(' '), { windowsHide: true, shell: true })
+                    : spawn('npm', npmArgs, { windowsHide: true });
                 child.stdout?.on('data', data => this.output.append(data.toString()));
                 child.stderr?.on('data', data => this.output.append(data.toString()));
                 child.once('error', reject);

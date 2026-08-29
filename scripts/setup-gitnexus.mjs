@@ -9,8 +9,10 @@ const sharedRoot = join(vendorRoot, 'gitnexus-shared');
 const cliRoot = join(vendorRoot, 'gitnexus');
 
 function run(command, args, cwd) {
-    const executable = process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command;
-    const result = spawnSync(executable, args, { cwd, stdio: 'inherit' });
+    const quoteForCmd = value => /^[A-Za-z0-9_@./:=+-]+$/.test(value) ? value : `"${value.replace(/"/g, '""')}"`;
+    const result = process.platform === 'win32' && command === 'npm'
+        ? spawnSync([command, ...args].map(quoteForCmd).join(' '), { cwd, stdio: 'inherit', shell: true })
+        : spawnSync(command, args, { cwd, stdio: 'inherit' });
     if (result.error) throw result.error;
     if (result.status !== 0) process.exit(result.status ?? 1);
 }

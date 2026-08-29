@@ -173,7 +173,11 @@ function stripStringsAndComments(line: string): string {
 }
 
 function countChar(text: string, ch: string): number {
-  return Array.from(text).filter(c => c === ch).length;
+  let count = 0;
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) === ch.charCodeAt(0)) count++;
+  }
+  return count;
 }
 
 function extractCodeUnitSnippet(lines: string[], declarationLine: number): { snippet: string; startLine: number } | null {
