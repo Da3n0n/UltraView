@@ -68,12 +68,20 @@ function App(): React.ReactElement {
         vscode.postMessage({ type: 'start' });
     }, []);
 
+    const analyze = useCallback(() => {
+        setBusy(true);
+        setError('');
+        setMessage('Analyzing the complete open workspace…');
+        vscode.postMessage({ type: 'analyze' });
+    }, []);
+
     return <div className="shell">
         <header>
             <div className="brand"><span>GN</span><strong>GitNexus</strong><small>original local UI</small></div>
             <div className={`status ${status.running ? 'online' : ''}`} title={status.message}>
                 <i />{status.installing ? 'Preparing' : status.running ? `Local · ${status.port}` : 'Stopped'}
             </div>
+            <button className="primary" onClick={analyze} disabled={!status.running || busy}>Analyze workspace</button>
             <button onClick={() => setFrameKey(key => key + 1)} disabled={!frameUrl}>Reload UI</button>
             <button onClick={() => vscode.postMessage({ type: 'openCli' })}>CLI</button>
             <button onClick={() => vscode.postMessage({ type: 'startMcp' })}>MCP</button>

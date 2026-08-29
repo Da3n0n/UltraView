@@ -7,6 +7,7 @@ import { GitNexusClient } from './client';
 import type { GitNexusRuntimeStatus } from './types';
 
 const execFileAsync = promisify(execFile);
+const RUNTIME_LAYOUT_VERSION = 2;
 function shellQuote(value: string): string {
     return `"${value.replace(/"/g, '\\"')}"`;
 }
@@ -112,7 +113,7 @@ export class GitNexusRuntime implements vscode.Disposable {
 
     private extractedRuntimeRoot(): string {
         const pin = this.runtimePin();
-        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}`);
+        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}-r${RUNTIME_LAYOUT_VERSION}`);
     }
 
     private runtimeArchive(): string {
