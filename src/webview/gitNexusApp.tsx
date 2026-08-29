@@ -1,144 +1,103 @@
-/**
- * GitNexus webview entry point — replaces the ReactFlow prototype.
- *
- * Layout (mirrors the original `gitnexus-web` App.tsx, minus onboarding and
- * the AI agent):
- *
- *     ┌─────────────────────────────────────────────────────────┐
- *     │                       Header                            │
- *     ├─────────────────────────────────────────────────────────┤
- *     │                                                         │
- *     │                       GraphCanvas (Sigma.js)            │
- *     │                                                         │
- *     ├──────────────────────────────┬──────────────────────────┤
- *     │   main — file tree / empty   │       RightPanel         │
- *     ├──────────────────────────────┴──────────────────────────┤
- *     │                       StatusBar                         │
- *     └─────────────────────────────────────────────────────────┘
- *
- * The local file tree is left out for now — VS Code already has one open in
- * the explorer, and the repo's symbol→file lookup happens through the
- * right panel. Bringing in the original `FileTreePanel` would mean bundling
- * a tree component plus a file-system API; defer until the layout is
- * otherwise solid.
- */
-
-import { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AppStateProvider, useAppState } from './gitNexus/state';
-import { GraphCanvas } from './gitNexus/GraphCanvas';
-import { Header } from './gitNexus/Header';
-import { StatusBar } from './gitNexus/StatusBar';
-import { RightPanel } from './gitNexus/RightPanel';
-import './gitNexus/theme.css';
+import './gitNexusApp.css';
 
-const EmptyState = (): React.ReactElement => {
-    const { status, postMessage, isAnalyzing } = useAppState();
-    const startable = !status.running && !status.installing;
-    return (
-        <div className="flex h-full w-full items-center justify-center">
-            <div className="max-w-[360px] text-center">
-                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-node-interface text-[20px] font-bold text-white shadow-glow">◇</div>
-                <h2 className="mb-1 text-[16px] font-semibold text-text-primary">Local code intelligence</h2>
-                <p className="mb-4 text-[12px] text-text-muted">
-                    {startable
-                        ? 'Start the GitNexus runtime bundled with Ultraview to explore symbols, dependencies and execution flows — all on this machine.'
-                        : status.installing
-                            ? 'Installing the GitNexus runtime…'
-                            : 'Indexing your workspace…'}
-                </p>
-                <button
-                    onClick={() => postMessage({ type: 'start' })}
-                    disabled={!startable || isAnalyzing}
-                    className="mb-2 inline-flex items-center gap-1.5 rounded-md bg-gradient-to-br from-accent to-node-interface px-4 py-1.5 text-[12px] font-semibold text-white shadow-glow disabled:opacity-50"
-                >
-                    {status.installing ? 'Installing…' : status.running ? 'Analyze workspace' : 'Start GitNexus'}
-                </button>
-                <p className="text-[10px] text-text-muted">GitNexus and its runtime are included — no separate installation.</p>
-            </div>
-        </div>
-    );
-};
-
-const AnalyzingState = (): React.ReactElement => {
-    const { progress, isAnalyzing, graph } = useAppState();
-    const showGraph = !isAnalyzing && (graph?.nodes.length ?? 0) > 0;
-    if (!showGraph && isAnalyzing) {
-        return (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-3">
-                <div className="h-1 w-64 overflow-hidden rounded-full bg-elevated">
-                    <div
-                        className="h-full rounded-full bg-gradient-to-r from-accent to-node-interface transition-all duration-300"
-                        style={{ width: `${progress?.percent ?? 0}%` }}
-                    />
-                </div>
-                <p className="text-[12px] text-text-muted">{progress?.message ?? progress?.status ?? 'Analyzing…'}</p>
-            </div>
-        );
-    }
-    return <></>;
-};
-
-const Shell = (): React.ReactElement => {
-    const { status, graph, postMessage, setSelectedNode, setRightPanelTab } = useAppState();
-    const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(null);
-
-    const showEmpty = !status.running && (graph?.nodes.length ?? 0) === 0;
-    const showAnalyzing = status.running && (graph?.nodes.length ?? 0) === 0;
-
-    const handleOpenFile = (path: string, line: number) => {
-        postMessage({ type: 'openFile', path, line });
-    };
-
-    const handleSelectFromHeader = (nodeId: string) => {
-        if (!graph) return;
-        const node = graph.nodes.find(n => n.id === nodeId);
-        if (node) {
-            setSelectedNode(node);
-            setRightPanelTab('code');
-            setHighlightedNodeId(nodeId);
-            setTimeout(() => setHighlightedNodeId(null), 1500);
-        }
-    };
-
-    return (
-        <div className="flex h-screen flex-col overflow-hidden bg-void text-text-primary">
-            <Header onSelectFromSearch={handleSelectFromHeader} />
-            <main className="flex min-h-0 flex-1">
-                <div className="relative min-w-0 flex-1">
-                    {/* GraphCanvas always renders its container; it shows
-                        placeholders for empty/error states internally so
-                        the canvas element is never unmounted by a parent
-                        conditional. */}
-                    {showEmpty ? (
-                        <EmptyState />
-                    ) : (
-                        <GraphCanvas
-                            highlightedNodeId={highlightedNodeId}
-                            onOpenFile={handleOpenFile}
-                            onSelectNode={node => {
-                                setSelectedNode(node);
-                                setRightPanelTab('code');
-                            }}
-                        />
-                    )}
-                </div>
-                <RightPanel />
-            </main>
-            <StatusBar />
-        </div>
-    );
-};
-
-const App = (): React.ReactElement => (
-    <AppStateProvider>
-        <Shell />
-    </AppStateProvider>
-);
-
-const root = document.getElementById('root');
-if (root) {
-    createRoot(root).render(<App />);
+interface RuntimeStatus {
+    running: boolean;
+    managed: boolean;
+    installing: boolean;
+    port: number;
+    version?: string;
+    message: string;
 }
 
-export default App;
+const vscode = (window as unknown as {
+    __vscodeApi: { postMessage(message: Record<string, unknown>): void };
+}).__vscodeApi;
+
+function App(): React.ReactElement {
+    const [status, setStatus] = useState<RuntimeStatus>({ running: false, managed: false, installing: false, port: 4747, message: 'Preparing local GitNexus…' });
+    const [frameUrl, setFrameUrl] = useState('');
+    const [frameKey, setFrameKey] = useState(0);
+    const [busy, setBusy] = useState(true);
+    const [message, setMessage] = useState('Starting the bundled runtime…');
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        const listener = (event: MessageEvent) => {
+            const payload = event.data ?? {};
+            if (payload.type === 'runtime') {
+                setStatus(payload.status);
+                if (payload.status?.installing) {
+                    setBusy(true);
+                    setMessage('Preparing the bundled GitNexus runtime for first use…');
+                }
+            }
+            if (payload.type === 'analysisProgress') {
+                const job = payload.job ?? {};
+                setBusy(true);
+                setMessage(String(job.progress?.message ?? job.progress?.phase ?? job.status ?? 'Analyzing the open project…'));
+            }
+            if (payload.type === 'serverReady') {
+                setStatus(payload.status);
+                setFrameUrl(String(payload.url));
+                setFrameKey(key => key + 1);
+                setBusy(true);
+                setMessage(payload.autoAnalyzed ? 'Opening the newly indexed project…' : 'Opening the local project…');
+                setError('');
+            }
+            if (payload.type === 'stopped') {
+                setFrameUrl('');
+                setBusy(false);
+                setMessage('The local GitNexus server is stopped.');
+            }
+            if (payload.type === 'error') {
+                setBusy(false);
+                setError(String(payload.message ?? 'GitNexus could not start.'));
+            }
+        };
+        window.addEventListener('message', listener);
+        vscode.postMessage({ type: 'ready' });
+        return () => window.removeEventListener('message', listener);
+    }, []);
+
+    const start = useCallback(() => {
+        setBusy(true);
+        setError('');
+        setMessage('Starting the bundled runtime and opening this project…');
+        vscode.postMessage({ type: 'start' });
+    }, []);
+
+    return <div className="shell">
+        <header>
+            <div className="brand"><span>GN</span><strong>GitNexus</strong><small>original local UI</small></div>
+            <div className={`status ${status.running ? 'online' : ''}`} title={status.message}>
+                <i />{status.installing ? 'Preparing' : status.running ? `Local · ${status.port}` : 'Stopped'}
+            </div>
+            <button onClick={() => setFrameKey(key => key + 1)} disabled={!frameUrl}>Reload UI</button>
+            <button onClick={() => vscode.postMessage({ type: 'openCli' })}>CLI</button>
+            <button onClick={() => vscode.postMessage({ type: 'startMcp' })}>MCP</button>
+            <button title="Pull pinned upstream source without overwriting Ultraview customizations" onClick={() => vscode.postMessage({ type: 'updateVendor' })}>Update</button>
+            {status.running
+                ? <button onClick={() => vscode.postMessage({ type: 'stop' })}>Stop</button>
+                : <button className="primary" onClick={start}>Start</button>}
+        </header>
+        <main>
+            {frameUrl && <iframe key={frameKey} src={frameUrl} title="GitNexus" allow="clipboard-read; clipboard-write" onLoad={() => { setBusy(false); setMessage(''); }} />}
+            {!frameUrl && !busy && !error && <div className="empty">
+                <div className="orb">⌘</div>
+                <h2>GitNexus is ready when you are</h2>
+                <p>The runtime and complete original UI are bundled with Ultraview. Start it to analyze and open the current local project.</p>
+                <button className="primary large" onClick={start}>Start GitNexus</button>
+            </div>}
+            {(busy || error) && <div className="overlay">
+                {busy && <i className="spinner" />}
+                <strong>{error ? 'GitNexus could not open' : 'GitNexus'}</strong>
+                <p>{error || message}</p>
+                {error && <button className="primary" onClick={start}>Retry</button>}
+            </div>}
+        </main>
+    </div>;
+}
+
+createRoot(document.getElementById('root')!).render(<App />);

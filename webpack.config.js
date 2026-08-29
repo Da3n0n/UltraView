@@ -72,18 +72,7 @@ const webviewConfig = {
     publicPath: './'
   },
   resolve: {
-    extensions: ['.tsx', '.ts', '.js', '.jsx'],
-    // Keep Sigma.js, Graphology and force-atlas2 unbundled. Sigma pulls in a
-    // graphology-types peer (>= 0.24) that we already satisfy; webpack 5 can
-    // resolve it from node_modules. Aliasing the entry we copied into
-    // src/webview/gitNexus/ to the root lets the vendored source's `../`
-    // imports keep working without rewriting every relative path.
-    alias: {
-      // Re-export the vendored source under our own path so the original's
-      // relative imports (`./lib/...`, `../hooks/...`) resolve the same way
-      // whether the file lives in vendor/ or src/webview/gitNexus/.
-      '@gitnexus-web': path.resolve(__dirname, 'vendor/GitNexus/gitnexus-web/src'),
-    }
+    extensions: ['.tsx', '.ts', '.js', '.jsx']
   },
   module: {
     rules: [
@@ -95,16 +84,8 @@ const webviewConfig = {
           options: { transpileOnly: true, configFile: 'tsconfig.webview.json' }
         }
       },
-      // CSS that goes through Tailwind/PostCSS (anything under src/webview/gitNexus)
       {
         test: /\.css$/,
-        include: [path.resolve(__dirname, 'src/webview/gitNexus')],
-        use: ['style-loader', 'css-loader', 'postcss-loader']
-      },
-      // Plain CSS for the rest of the webviews
-      {
-        test: /\.css$/,
-        exclude: [path.resolve(__dirname, 'src/webview/gitNexus')],
         use: ['style-loader', 'css-loader']
       }
     ]

@@ -15,18 +15,11 @@
     "sourceMap": true,
     "jsx": "react-jsx",
     "isolatedModules": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["vendor/GitNexus/gitnexus-web/src/*"],
-      "@gitnexus-web/*": ["vendor/GitNexus/gitnexus-web/src/*"]
-    },
     "noEmit": true
   },
   "include": [
     "src/webview/**/*",
-    "src/webview/gitNexusApp.tsx",
-    "src/webview/gitNexus/**/*",
-    "vendor/GitNexus/gitnexus-web/src/**/*"
+    "src/webview/gitNexusApp.tsx"
   ],
-  "exclude": ["node_modules", ".vscode-test", "dist", "vendor/GitNexus/gitnexus-web/node_modules", "vendor/GitNexus/gitnexus-web/src/core/llm/**", "vendor/GitNexus/gitnexus-web/src/core/ingestion/**", "vendor/GitNexus/gitnexus-web/src/services/**", "vendor/GitNexus/gitnexus-web/src/i18n/**", "vendor/GitNexus/gitnexus-web/src/locales/**"]
+  "exclude": ["node_modules", ".vscode-test", "dist"]
 }
