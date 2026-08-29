@@ -43,6 +43,11 @@ const NON_CODE_EXTENSIONS = new Set([
 
 function shouldSkipFile(fp: string, ext: string, baseName: string): boolean {
   if (ext && NON_CODE_EXTENSIONS.has(ext.toLowerCase())) return true;
+  try {
+    if (fs.statSync(fp).size > 2 * 1024 * 1024) return true;
+  } catch {
+    return true;
+  }
   const skipBaseNames = new Set([
     '.gitignore', '.prettierignore', '.prettierrc', '.vscodeignore',
     'license', 'procfile', 'dockerfile', 'makefile', 'cmakelists.txt'

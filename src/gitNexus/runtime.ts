@@ -68,7 +68,16 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     private nodeExecutable(): string {
-        return vscode.workspace.getConfiguration('ultraview.gitNexus').get<string>('nodePath', '').trim() || 'node';
+        const configured = vscode.workspace.getConfiguration('ultraview.gitNexus').get<string>('nodePath', '').trim();
+        if (configured) return configured;
+        const bundled = path.join(
+            this.context.extensionPath,
+            'resources',
+            'gitnexus-runtime',
+            'node',
+            process.platform === 'win32' ? 'node.exe' : 'node'
+        );
+        return fs.existsSync(bundled) ? bundled : 'node';
     }
 
     private async assertNode(): Promise<string> {
@@ -77,7 +86,7 @@ export class GitNexusRuntime implements vscode.Disposable {
         try {
             ({ stdout } = await execFileAsync(node, ['--version'], { windowsHide: true }));
         } catch {
-            throw new Error('GitNexus needs Node.js 22.18+ (or 24.11+). Install Node and ensure `node` is on PATH, or set ultraview.gitNexus.nodePath.');
+            throw new Error('The bundled GitNexus Node runtime could not start. Reinstall Ultraview, or set ultraview.gitNexus.nodePath to Node.js 22.18+.');
         }
         if (!validNodeVersion(stdout)) {
             throw new Error(`GitNexus needs Node.js 22.18+ (or 24.11+); found ${stdout.trim()}.`);

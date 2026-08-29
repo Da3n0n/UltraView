@@ -18,7 +18,7 @@ The updater refuses to run when tracked files inside the submodule were edited o
 - `Ultraview: Open GitNexus CLI`
 - `Ultraview: Start GitNexus MCP Server`
 
-Packaged Ultraview builds omit the vendor source and install the pinned GitNexus npm runtime into VS Code extension storage on first use. GitNexus requires Node.js 22.18+ or 24.11+; an explicit executable can be selected with `ultraview.gitNexus.nodePath`.
+Packaged Ultraview builds omit the vendor source and include a verified GitNexus production runtime, its native dependencies, and Node.js. No first-use download or separate install is required. An explicit system Node executable can still be selected with `ultraview.gitNexus.nodePath` for development or diagnostics.
 
 ## Project Manager Sync
 

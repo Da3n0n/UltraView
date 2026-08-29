@@ -164,7 +164,7 @@ function App(): React.ReactElement {
 
         <div className="body">
             <main>
-                {!status.running && <div className="empty"><div className="orb">⌘</div><h2>Local code intelligence</h2><p>Start the GitNexus runtime bundled with Ultraview to explore symbols, dependencies, execution flows and impact—all on this machine.</p><button className="primary large" onClick={() => send('start')}>Start GitNexus</button><small>No separate GitNexus install required · Node.js 22.18+ or 24.11+</small></div>}
+                {!status.running && <div className="empty"><div className="orb">⌘</div><h2>Local code intelligence</h2><p>Start the GitNexus runtime bundled with Ultraview to explore symbols, dependencies, execution flows and impact—all on this machine.</p><button className="primary large" onClick={() => send('start')}>Start GitNexus</button><small>GitNexus and its runtime are included · no separate installation</small></div>}
                 {status.running && !snapshot?.graph.nodes.length && <div className="empty"><div className="orb">◎</div><h2>Index this workspace</h2><p>The local service is ready. Analyze the open folder to create its knowledge graph.</p><button className="primary large" onClick={() => send('analyze')}>Analyze workspace</button></div>}
                 {status.running && Boolean(snapshot?.graph.nodes.length) && <ReactFlow nodes={elements.nodes} edges={elements.edges} onNodeClick={onNodeClick} onNodeDoubleClick={onNodeDoubleClick} fitView minZoom={0.05} maxZoom={2.5} nodesDraggable>
                     <Background gap={24} size={1} color="var(--vscode-editorIndentGuide-background)" />

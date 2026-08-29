@@ -9,8 +9,9 @@ const runtimeRoot = join(projectRoot, 'resources', 'gitnexus-runtime');
 const packageRoot = join(runtimeRoot, 'node_modules', 'gitnexus');
 const marker = join(runtimeRoot, 'runtime.json');
 const cli = join(packageRoot, 'dist', 'cli', 'index.js');
+const bundledNode = join(runtimeRoot, 'node', process.platform === 'win32' ? 'node.exe' : 'node');
 
-if (existsSync(marker) && existsSync(cli)) {
+if (existsSync(marker) && existsSync(cli) && existsSync(bundledNode)) {
     const prepared = JSON.parse(readFileSync(marker, 'utf8'));
     if (prepared.version === pin.version && prepared.commit === pin.commit) {
         console.log(`Bundled GitNexus runtime is ready (${pin.version}).`);
@@ -32,5 +33,7 @@ cpSync(sourceModules, join(runtimeRoot, 'node_modules'), { recursive: true, forc
 cpSync(join(sourceRoot, 'dist'), join(packageRoot, 'dist'), { recursive: true, force: true });
 cpSync(join(sourceRoot, 'vendor'), join(packageRoot, 'vendor'), { recursive: true, force: true });
 cpSync(join(sourceRoot, 'package.json'), join(packageRoot, 'package.json'), { force: true });
+mkdirSync(dirname(bundledNode), { recursive: true });
+cpSync(process.execPath, bundledNode, { force: true });
 writeFileSync(marker, `${JSON.stringify({ version: pin.version, commit: pin.commit }, null, 4)}\n`);
 console.log('Self-contained GitNexus runtime prepared.');
