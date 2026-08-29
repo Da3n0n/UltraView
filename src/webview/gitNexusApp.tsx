@@ -106,9 +106,13 @@ const Shell = (): React.ReactElement => {
             <Header onSelectFromSearch={handleSelectFromHeader} />
             <main className="flex min-h-0 flex-1">
                 <div className="relative min-w-0 flex-1">
-                    {showEmpty && <EmptyState />}
-                    {showAnalyzing && <AnalyzingState />}
-                    {!showEmpty && !showAnalyzing && (
+                    {/* GraphCanvas always renders its container; it shows
+                        placeholders for empty/error states internally so
+                        the canvas element is never unmounted by a parent
+                        conditional. */}
+                    {showEmpty ? (
+                        <EmptyState />
+                    ) : (
                         <GraphCanvas
                             highlightedNodeId={highlightedNodeId}
                             onOpenFile={handleOpenFile}

@@ -8,13 +8,22 @@
  * clicks propagate to the parent which forwards them to the VS Code
  * extension as `openFile` messages.
  *
- * Stability matters here: VS Code collapses/hides sidebar webviews as the
- * user navigates. When the panel is hidden the canvas is detached, which
- * can lose the WebGL context. We rebuild Sigma on data change AND on
- * context loss so the user never sees a permanently blank canvas.
+ * Stability rules this component follows strictly:
+ *   1. The outer container div is ALWAYS rendered with the same ref —
+ *      empty / error placeholders render INSIDE it, so the canvas
+ *      element is never unmounted by a parent conditional.
+ *   2. Mount Sigma with useLayoutEffect so the canvas is created AFTER
+ *      the browser has computed layout. WebGL renderers need a non-zero
+ *      container size on first paint or the drawing buffer stays 0x0.
+ *   3. The mount effect's dep array is [mountFingerprint, remountTick]
+ *      only — props and other state are captured via refs so the effect
+ *      doesn't re-run on re-render. State changes never recreate Sigma.
+ *   4. WebGL context loss is detected, the dead renderer is killed, and
+ *      a remount is scheduled via remountTick. ResizeObserver ignores
+ *      0x0 sizes that happen during sidebar collapse.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Sigma from 'sigma';
 import Graph from 'graphology';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
@@ -100,8 +109,6 @@ const buildGraph = (kg: KnowledgeGraph): Graph => {
 
 const runLayout = (graph: Graph): void => {
     if (graph.order === 0) return;
-    // A circular initial layout keeps disconnected components from collapsing
-    // on top of each other while ForceAtlas2 runs. Deterministic + cheap.
     circular.assign(graph);
     const settings = forceAtlas2.inferSettings(graph);
     forceAtlas2.assign(graph, {
@@ -116,10 +123,6 @@ const runLayout = (graph: Graph): void => {
     });
 };
 
-// Quick stable fingerprint of the underlying data. We rebuild Sigma only when
-// the actual node/edge set changes — NOT when the parent state object
-// reference changes (which happens on every message and would otherwise
-// thrash the WebGL context).
 const fingerprint = (kg: KnowledgeGraph | null): string => {
     if (!kg) return 'empty';
     return `${kg.nodes.length}:${kg.relationships.length}`;
@@ -135,26 +138,47 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
     const { graph, setSelectedNode, setRightPanelTab } = useAppState();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const sigmaRef = useRef<Sigma | null>(null);
+    // Stash the latest click handlers in refs so the mount-once effect
+    // doesn't need them in its dep array (which would re-run it).
+    const onSelectNodeRef = useRef(onSelectNode);
+    const onOpenFileRef = useRef(onOpenFile);
+    const setSelectedNodeRef = useRef(setSelectedNode);
+    const setRightPanelTabRef = useRef(setRightPanelTab);
+    onSelectNodeRef.current = onSelectNode;
+    onOpenFileRef.current = onOpenFile;
+    setSelectedNodeRef.current = setSelectedNode;
+    setRightPanelTabRef.current = setRightPanelTab;
+
     const [error, setError] = useState<string | null>(null);
-    // Bump this counter to force a re-mount after a WebGL context loss.
+    // The fingerprint of the data we last mounted Sigma against.
+    const [mountFingerprint, setMountFingerprint] = useState<string>('empty');
+    // Bumped to force a re-mount after WebGL context loss or 0x0 retry.
     const [remountTick, setRemountTick] = useState(0);
 
-    // Single effect: build graph, mount Sigma, wire up handlers, tear down
-    // on unmount or data change. The fingerprint + remountTick give us a
-    // stable dep that actually changes when we need to rebuild.
     useEffect(() => {
+        setMountFingerprint(fingerprint(graph));
+    }, [graph]);
+
+    useLayoutEffect(() => {
         const container = containerRef.current;
         if (!container) return;
+        if (!graph || graph.nodes.length === 0) return;
 
-        const fp = fingerprint(graph);
-        if (!graph || graph.nodes.length === 0) {
-            return;
+        // Reject 0x0 containers — sidebar panels sometimes start that way.
+        // Defer with rAF and bump remountTick so this effect re-runs once
+        // the layout is settled.
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) {
+            const id = requestAnimationFrame(() => {
+                setRemountTick(value => value + 1);
+            });
+            return () => cancelAnimationFrame(id);
         }
-
-        setError(null);
 
         const g = buildGraph(graph);
         runLayout(g);
+
+        setError(null);
 
         let renderer: Sigma | null = null;
         try {
@@ -181,11 +205,11 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
                         label: raw,
                         properties: { name: display ?? node, filePath, startLine },
                     };
-                    setSelectedNode(graphNode);
-                    setRightPanelTab('code');
-                    onSelectNode?.(graphNode);
+                    setSelectedNodeRef.current?.(graphNode);
+                    setRightPanelTabRef.current?.('code');
+                    onSelectNodeRef.current?.(graphNode);
                     if (event.original?.detail === 2 && filePath) {
-                        onOpenFile?.(filePath, startLine);
+                        onOpenFileRef.current?.(filePath, startLine);
                     }
                 } catch (err) {
                     console.warn('GraphCanvas click handler error:', err);
@@ -193,32 +217,40 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
             });
 
             renderer.on('clickStage', () => {
-                setSelectedNode(null);
+                setSelectedNodeRef.current?.(null);
             });
 
             sigmaRef.current = renderer;
         } catch (err) {
-            // WebGL may not be available in some webviews; surface a friendly
-            // message instead of leaving a blank canvas.
             console.error('Sigma init failed:', err);
             setError(err instanceof Error ? err.message : String(err));
             return;
         }
 
-        // Resize observer: when the panel is hidden + shown, the canvas
-        // size may change. Sigma needs a refresh so it re-fits its viewport.
-        const ro = new ResizeObserver(() => {
-            try {
-                renderer?.refresh();
-            } catch (err) {
-                console.warn('Sigma refresh error:', err);
+        // Resize observer: skip 0x0 sizes, dedupe to one refresh per frame.
+        let rafId: number | null = null;
+        const scheduleRefresh = () => {
+            if (rafId !== null) return;
+            rafId = requestAnimationFrame(() => {
+                rafId = null;
+                try {
+                    renderer?.refresh();
+                } catch (err) {
+                    console.warn('Sigma refresh error:', err);
+                }
+            });
+        };
+        const ro = new ResizeObserver(entries => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                if (width < 1 || height < 1) continue;
             }
+            scheduleRefresh();
         });
         ro.observe(container);
 
-        // WebGL context loss handler. Chromium drops the context when the
-        // webview is hidden for a while or the GPU is reset. Without this,
-        // the user sees a permanently blank canvas.
+        // WebGL context loss — kill the dead renderer and bump the
+        // remount counter so this effect runs again with a fresh context.
         const canvas = container.querySelector('canvas');
         const onContextLost = (event: Event) => {
             event.preventDefault();
@@ -230,12 +262,12 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
             } catch {
                 /* ignore */
             }
-            // Re-mount on the next tick by bumping the remount counter.
-            setTimeout(() => setRemountTick(value => value + 1), 0);
+            setRemountTick(value => value + 1);
         };
         canvas?.addEventListener('webglcontextlost', onContextLost);
 
         return () => {
+            if (rafId !== null) cancelAnimationFrame(rafId);
             ro.disconnect();
             canvas?.removeEventListener('webglcontextlost', onContextLost);
             try {
@@ -247,12 +279,8 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
                 sigmaRef.current = null;
             }
         };
-        // We intentionally exclude setSelectedNode/setRightPanelTab/onSelectNode/onOpenFile
-        // — they're stable callbacks from the parent. The fingerprint changes
-        // only when node/edge counts change; remountTick forces a rebuild on
-        // context loss.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fingerprint(graph), remountTick]);
+    }, [mountFingerprint, remountTick]);
 
     // Highlight a single node when a list/result row is hovered.
     useEffect(() => {
@@ -274,29 +302,28 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
 
     const isEmpty = !graph || graph.nodes.length === 0;
 
-    if (error) {
-        return (
-            <div className="flex h-full w-full items-center justify-center text-text-muted">
-                <div className="max-w-[320px] text-center text-[12px]">
-                    <div className="mb-2 text-2xl">⚠</div>
-                    <p className="text-text-primary">Graph renderer failed to start</p>
-                    <p className="mt-1 text-[10px] text-text-muted">{error}</p>
-                    <p className="mt-2 text-[10px] text-text-muted">Reload the panel to retry. WebGL may be disabled in this VS Code window.</p>
+    return (
+        <div ref={containerRef} className="relative h-full w-full" data-testid="sigma-canvas">
+            {/* Sigma mounts directly into this div. The placeholder overlays
+                sit above the canvas so the container never unmounts. */}
+            {error && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-void/80 text-text-muted">
+                    <div className="max-w-[320px] text-center text-[12px]">
+                        <div className="mb-2 text-2xl">⚠</div>
+                        <p className="text-text-primary">Graph renderer failed to start</p>
+                        <p className="mt-1 text-[10px] text-text-muted">{error}</p>
+                        <p className="mt-2 text-[10px] text-text-muted">Reload the panel to retry. WebGL may be disabled in this VS Code window.</p>
+                    </div>
                 </div>
-            </div>
-        );
-    }
-
-    if (isEmpty) {
-        return (
-            <div className="flex h-full w-full items-center justify-center text-text-muted">
-                <div className="text-center">
-                    <div className="mb-3 text-3xl">◇</div>
-                    <p className="text-sm">No graph yet. Analyze a workspace to begin.</p>
+            )}
+            {isEmpty && !error && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center text-text-muted">
+                    <div className="text-center">
+                        <div className="mb-3 text-3xl">◇</div>
+                        <p className="text-sm">No graph yet. Analyze a workspace to begin.</p>
+                    </div>
                 </div>
-            </div>
-        );
-    }
-
-    return <div ref={containerRef} className="h-full w-full" data-testid="sigma-canvas" />;
+            )}
+        </div>
+    );
 };
