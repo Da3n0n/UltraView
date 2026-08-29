@@ -10,8 +10,8 @@
  *
  * Stability matters here: VS Code collapses/hides sidebar webviews as the
  * user navigates. When the panel is hidden the canvas is detached, which
- * can lose the WebGL context. We rebuild Sigma on visibility AND on data
- * change so the user never sees a permanently blank canvas.
+ * can lose the WebGL context. We rebuild Sigma on data change AND on
+ * context loss so the user never sees a permanently blank canvas.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -135,38 +135,26 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
     const { graph, setSelectedNode, setRightPanelTab } = useAppState();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const sigmaRef = useRef<Sigma | null>(null);
-    const builtGraphRef = useRef<Graph | null>(null);
-    const builtFingerprintRef = useRef<string>('empty');
     const [error, setError] = useState<string | null>(null);
+    // Bump this counter to force a re-mount after a WebGL context loss.
+    const [remountTick, setRemountTick] = useState(0);
 
-    // Build the graphology graph whenever the data fingerprint changes.
-    // Storing the result in a ref (not state) means React doesn't re-render
-    // every time the graph data settles — only the actual fingerprint change
-    // triggers the heavy work.
-    useEffect(() => {
-        const fp = fingerprint(graph);
-        if (fp === builtFingerprintRef.current) return;
-        if (!graph || graph.nodes.length === 0) {
-            builtGraphRef.current = null;
-            builtFingerprintRef.current = fp;
-            return;
-        }
-        const g = buildGraph(graph);
-        runLayout(g);
-        builtGraphRef.current = g;
-        builtFingerprintRef.current = fp;
-    }, [graph]);
-
-    // Mount Sigma against the ref'd Graph. We tear down + re-mount when:
-    //   1. The data fingerprint changes
-    //   2. The component unmounts
-    // This is the only place Sigma is created.
+    // Single effect: build graph, mount Sigma, wire up handlers, tear down
+    // on unmount or data change. The fingerprint + remountTick give us a
+    // stable dep that actually changes when we need to rebuild.
     useEffect(() => {
         const container = containerRef.current;
-        const g = builtGraphRef.current;
-        if (!container || !g || g.order === 0) return;
+        if (!container) return;
+
+        const fp = fingerprint(graph);
+        if (!graph || graph.nodes.length === 0) {
+            return;
+        }
 
         setError(null);
+
+        const g = buildGraph(graph);
+        runLayout(g);
 
         let renderer: Sigma | null = null;
         try {
@@ -178,8 +166,6 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
                 labelRenderedSizeThreshold: 6,
                 minCameraRatio: 0.05,
                 maxCameraRatio: 8,
-                // Pull label colors from the page foreground so they read in
-                // any VS Code theme.
                 labelColor: { color: 'var(--vscode-editor-foreground, #e5e7eb)' },
                 edgeLabelColor: { color: 'var(--vscode-editor-foreground, #e5e7eb)' },
             });
@@ -230,9 +216,9 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
         });
         ro.observe(container);
 
-        // WebGL context loss handler — recreate the renderer. Chromium drops
-        // the context when the webview is hidden for a while or the GPU is
-        // reset. Without this, the user sees a permanently blank canvas.
+        // WebGL context loss handler. Chromium drops the context when the
+        // webview is hidden for a while or the GPU is reset. Without this,
+        // the user sees a permanently blank canvas.
         const canvas = container.querySelector('canvas');
         const onContextLost = (event: Event) => {
             event.preventDefault();
@@ -244,17 +230,8 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
             } catch {
                 /* ignore */
             }
-            // Re-mount on the next tick by forcing a state update.
-            setTimeout(() => {
-                if (container.isConnected && builtGraphRef.current) {
-                    // The outer effect re-runs when builtFingerprintRef hasn't
-                    // changed but we re-trigger by nulling it.
-                    builtFingerprintRef.current = '';
-                    setError(null);
-                    // Force re-run via a no-op state nudge:
-                    setHighlightedRefresh(prev => prev + 1);
-                }
-            }, 0);
+            // Re-mount on the next tick by bumping the remount counter.
+            setTimeout(() => setRemountTick(value => value + 1), 0);
         };
         canvas?.addEventListener('webglcontextlost', onContextLost);
 
@@ -270,13 +247,12 @@ export const GraphCanvas = ({ onSelectNode, onOpenFile, highlightedNodeId }: Gra
                 sigmaRef.current = null;
             }
         };
-        // We intentionally don't put setSelectedNode/setRightPanelTab/onSelectNode/onOpenFile
-        // in the dep array — they're stable callbacks from the parent.
+        // We intentionally exclude setSelectedNode/setRightPanelTab/onSelectNode/onOpenFile
+        // — they're stable callbacks from the parent. The fingerprint changes
+        // only when node/edge counts change; remountTick forces a rebuild on
+        // context loss.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [builtFingerprintRef.current, error]);
-
-    // Bump counter to nudge a re-mount after a WebGL context loss.
-    const [, setHighlightedRefresh] = useState(0);
+    }, [fingerprint(graph), remountTick]);
 
     // Highlight a single node when a list/result row is hovered.
     useEffect(() => {
