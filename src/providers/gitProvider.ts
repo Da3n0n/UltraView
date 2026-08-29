@@ -7,7 +7,7 @@ import * as os from 'os';
 import { buildGitHtml } from '../git/gitUi';
 import { GitProjects } from '../git/gitProjects';
 import { GitAccounts } from '../git/gitAccounts';
-import { GitProfile, GitProvider as GitProviderType, AuthMethod } from '../git/types';
+import { GitAccount, GitProfile, GitProvider as GitProviderType, AuthMethod } from '../git/types';
 import { applyLocalAccount, clearLocalAccount, getRemoteUrl } from '../git/gitCredentials';
 import { SharedStore } from '../sync/sharedStore';
 import { getS3Credentials } from '../s3backup';
@@ -24,6 +24,11 @@ interface GitStatus {
 
 type GitConflictStrategy = 'ours' | 'theirs';
 type GitCommandRunner = (cmd: string) => Promise<{ stdout: string; stderr: string }>;
+interface GitAuthContext {
+    host: string;
+    username: string;
+    token: string;
+}
 const projectGitOpLocks = new Set<string>();
 const legacyRewriteCheckedProjects = new Set<string>();
 
@@ -201,13 +206,40 @@ function parseGitArgs(cmd: string): string[] {
  * Windows cmd.exe command-line length limit (8191 chars). Arguments are
  * passed directly to the git process, which is also safer against injection.
  */
-function createGitRunner(projectPath: string, timeout: number = 30000): GitCommandRunner {
+function authContextFromAccount(account?: GitAccount): GitAuthContext | undefined {
+    if (!account?.token || account.authMethod === 'ssh') return undefined;
+    const host = account.provider === 'github'
+        ? 'github.com'
+        : account.provider === 'gitlab'
+            ? 'gitlab.com'
+            : 'dev.azure.com';
+    return { host, username: account.username, token: account.token };
+}
+
+function createGitRunner(
+    projectPath: string,
+    timeout: number = 30000,
+    auth?: GitAuthContext
+): GitCommandRunner {
     return (cmd: string) =>
         new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+            const env: NodeJS.ProcessEnv = { ...process.env };
+            if (auth) {
+                // Pass the selected Project Manager account ephemerally to Git
+                // and all recursive submodule child processes. Host scoping
+                // prevents a GitHub token, for example, being sent to a GitLab
+                // submodule. Nothing is written to .gitmodules or child config.
+                const configIndex = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+                const basic = Buffer.from(`${auth.username}:${auth.token}`).toString('base64');
+                env.GIT_CONFIG_COUNT = String(configIndex + 1);
+                env[`GIT_CONFIG_KEY_${configIndex}`] = `http.https://${auth.host}/.extraHeader`;
+                env[`GIT_CONFIG_VALUE_${configIndex}`] = `Authorization: Basic ${basic}`;
+                env.GIT_TERMINAL_PROMPT = '0';
+            }
             childProcess.execFile(
                 'git',
                 parseGitArgs(cmd),
-                { cwd: projectPath, env: process.env, timeout, maxBuffer: 10 * 1024 * 1024 },
+                { cwd: projectPath, env, timeout, maxBuffer: 10 * 1024 * 1024 },
                 (error, stdout, stderr) => {
                     const out = Buffer.isBuffer(stdout) ? stdout.toString('utf8') : (stdout ?? '');
                     const err = Buffer.isBuffer(stderr) ? stderr.toString('utf8') : (stderr ?? '');
@@ -312,7 +344,37 @@ function isTransientGitError(stderr: string, message: string): boolean {
     if (/the remote end hung up unexpectedly/.test(text)) return true;
     if (/rpc failed/.test(text) && !/git-receive-pack not permitted/i.test(text)) return true;
     if (/empty reply from server/.test(text)) return true;
+    if (/refused_stream|stream error.*refused|http2.*transport.*cannot retry/.test(text)) return true;
     return false;
+}
+
+function isLfsLockVerificationError(value: string): boolean {
+    return /git lfs locking api|lfs.*locks\/verify|locksverify/i.test(value)
+        && /does not support|refused_stream|stream error|transport.*cannot retry|failed to verify/i.test(value);
+}
+
+/**
+ * Git LFS recommends disabling lock verification when a remote cannot provide
+ * the optional locking endpoint. Scope the setting to the remote host and the
+ * current repository; never copy credentials from the remote URL into config.
+ */
+async function disableUnsupportedLfsLockVerification(run: GitCommandRunner): Promise<string | undefined> {
+    try {
+        const { stdout } = await run('git remote get-url origin');
+        const rawUrl = stdout.trim();
+        let host: string | undefined;
+        if (/^https?:\/\//i.test(rawUrl)) {
+            host = new URL(rawUrl).hostname;
+        } else {
+            const sshMatch = rawUrl.match(/^[^@]+@([^:]+):/);
+            host = sshMatch?.[1];
+        }
+        if (!host || !/^[a-z0-9.-]+$/i.test(host)) return undefined;
+        await run(`git config --local lfs.https://${host}/.locksverify false`);
+        return host;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -565,9 +627,10 @@ async function mergeRemoteBranch(
     projectPath: string,
     branch: string,
     strategy: GitConflictStrategy,
-    alreadyFetched = false
+    alreadyFetched = false,
+    auth?: GitAuthContext
 ): Promise<string[]> {
-    const run = createGitRunner(projectPath);
+    const run = createGitRunner(projectPath, 30000, auth);
     const notes: string[] = [];
 
     // Fetch with auto-redirect on "Repository moved" (up to 3 attempts).
@@ -661,6 +724,53 @@ async function resolveConflictPreservingBoth(
     const projectRoot = path.resolve(projectPath) + path.sep;
     if (!absolutePath.startsWith(projectRoot)) {
         throw new Error(`Refusing to resolve a conflict outside the project: ${relativePath}`);
+    }
+
+    // Gitlinks are commit pointers, not files. Trying to combine/copy them as
+    // ordinary conflicts can corrupt the index or throw EISDIR. Resolve the
+    // common case automatically when one pointer is an ancestor of the other;
+    // a genuinely divergent vendor history is rare and must be surfaced rather
+    // than silently discarding either dependency update.
+    try {
+        const { stdout: unmergedOut } = await run(`git ls-files -u -- ${quotedPath}`);
+        const gitlinkStages = unmergedOut
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((line) => line.match(/^160000\s+([0-9a-f]+)\s+([123])\t/i))
+            .filter((match): match is RegExpMatchArray => !!match);
+        if (gitlinkStages.length) {
+            const ours = gitlinkStages.find((match) => match[2] === '2')?.[1];
+            const theirs = gitlinkStages.find((match) => match[2] === '3')?.[1];
+            if (!ours || !theirs) {
+                throw new Error(`Incomplete submodule pointer conflict for ${relativePath}`);
+            }
+
+            const subRun = createGitRunner(absolutePath, 30000);
+            await tryGit(subRun, 'git fetch --quiet --prune origin');
+            await tryGit(subRun, `git fetch --quiet origin ${ours}`);
+            await tryGit(subRun, `git fetch --quiet origin ${theirs}`);
+
+            let chosen: string | undefined;
+            if (await tryGit(subRun, `git merge-base --is-ancestor ${ours} ${theirs}`)) {
+                chosen = theirs;
+            } else if (await tryGit(subRun, `git merge-base --is-ancestor ${theirs} ${ours}`)) {
+                chosen = ours;
+            }
+
+            if (!chosen) {
+                throw new Error(
+                    `Submodule "${relativePath}" changed to two divergent commits (${ours.slice(0, 8)} and ${theirs.slice(0, 8)}). ` +
+                    'Ultraview left the merge unresolved so neither vendor update is lost.'
+                );
+            }
+
+            await run(`git update-index --add --cacheinfo 160000 ${chosen} ${quotedPath}`);
+            await run(`git submodule update --init --recursive --checkout -- ${quotedPath}`);
+            return;
+        }
+    } catch (err: any) {
+        if (/Submodule |Incomplete submodule/.test(err?.message ?? '')) throw err;
+        // Not a gitlink conflict; continue through the normal file resolver.
     }
 
     await tryGit(run, `git checkout --conflict=merge -- ${quotedPath}`);
@@ -851,8 +961,8 @@ async function getCurrentBranch(projectPath: string): Promise<string> {
  *
  * Always returns the resolved branch name. Never throws.
  */
-async function resolveOrAttachHead(projectPath: string): Promise<string> {
-    const run = createGitRunner(projectPath, 8000);
+async function resolveOrAttachHead(projectPath: string, auth?: GitAuthContext): Promise<string> {
+    const run = createGitRunner(projectPath, 8000, auth);
 
     // Fast path: already on a named branch
     try {
@@ -1274,6 +1384,7 @@ async function gitPush(projectPath: string, commitMsg?: string): Promise<string>
     let lastErr: any;
     let workflowFilesExcluded = false;
     let redirectedFrom: string | undefined;
+    let lfsLocksDisabledFor: string | undefined;
     for (let attempt = 1; attempt <= 4; attempt++) {
         try {
             const { stdout, stderr } = await withTransientRetry(
@@ -1284,6 +1395,7 @@ async function gitPush(projectPath: string, commitMsg?: string): Promise<string>
             const parts: string[] = [];
             if (redirectedFrom) parts.push(`remote was at ${redirectedFrom}, now using ${(await getRemoteUrl(projectPath)) ?? 'new URL'}`);
             if (workflowFilesExcluded) parts.push('.github/workflows excluded from all history (token lacks workflow scope; re-authenticate to push them)');
+            if (lfsLocksDisabledFor) parts.push(`Git LFS lock verification disabled for ${lfsLocksDisabledFor}`);
             return parts.length ? `${base} — ${parts.join(' | ')}` : base;
         } catch (err: any) {
             lastErr = err;
@@ -1302,6 +1414,14 @@ async function gitPush(projectPath: string, commitMsg?: string): Promise<string>
                 const newUrl = await rewriteOriginRemote(projectPath, moved, run);
                 console.log(`[Ultraview] origin redirected to ${newUrl}`);
                 continue;
+            }
+
+            // Git LFS can abort an otherwise valid push when its optional lock
+            // endpoint is unsupported or repeatedly fails at the HTTP/2 layer.
+            // Transient retries have already been exhausted by this point.
+            if (!lfsLocksDisabledFor && isLfsLockVerificationError(errMsg)) {
+                lfsLocksDisabledFor = await disableUnsupportedLfsLockVerification(run);
+                if (lfsLocksDisabledFor) continue;
             }
 
             // 2. Workflow scope → strip .github/workflows and force-push
@@ -1345,9 +1465,10 @@ interface SyncResult {
 }
 
 async function getSyncDirection(
-    projectPath: string
+    projectPath: string,
+    auth?: GitAuthContext
 ): Promise<{ ahead: number; behind: number; diverged: boolean }> {
-    const run = createGitRunner(projectPath, 10000);
+    const run = createGitRunner(projectPath, 10000, auth);
 
     // Fetch with auto-redirect on "Repository moved" so a stale local origin
     // never blocks the status check (and so the badge reflects the real
@@ -1397,27 +1518,151 @@ async function getSyncDirection(
     }
 }
 
-/**
- * Returns paths of all registered git submodules within a repo.
- * Falls back to an empty list if the repo has no submodules or git isn't available.
- */
-async function findSubmodulePaths(projectPath: string): Promise<string[]> {
-    const run = createGitRunner(projectPath, 10000);
-    try {
-        const { stdout } = await run('git submodule status --recursive');
-        if (!stdout.trim()) return [];
-        return stdout
-            .trim()
-            .split(/\r?\n/)
-            .map((line) => {
-                // Format: [ +-U]<sha1> <relative-path> [(<describe>)]
-                const match = line.trim().match(/^[+\-U ]?\S+\s+(\S+)/);
-                return match ? path.join(projectPath, match[1]) : null;
-            })
-            .filter((p): p is string => p !== null);
-    } catch {
-        return [];
+interface SubmoduleStatusEntry {
+    absolutePath: string;
+    relativePath: string;
+    state: 'clean' | 'different' | 'uninitialized' | 'conflicted';
+}
+
+/** Parse `git submodule status --recursive` without discarding its state prefix. */
+function parseSubmoduleStatus(projectPath: string, stdout: string): SubmoduleStatusEntry[] {
+    const entries: SubmoduleStatusEntry[] = [];
+    for (const rawLine of stdout.replace(/\r/g, '').split('\n')) {
+        if (!rawLine.trim()) continue;
+        // Format: [ +-U]<sha1> <relative-path> [(<describe>)]
+        const match = rawLine.match(/^([ +\-U])?[0-9a-f]+\s+(.+?)(?:\s+\([^)]+\))?\s*$/i);
+        if (!match) continue;
+        const prefix = match[1] || ' ';
+        const relativePath = match[2];
+        const state: SubmoduleStatusEntry['state'] = prefix === '-'
+            ? 'uninitialized'
+            : prefix === '+'
+                ? 'different'
+                : prefix === 'U'
+                    ? 'conflicted'
+                    : 'clean';
+        entries.push({
+            absolutePath: path.resolve(projectPath, relativePath),
+            relativePath,
+            state,
+        });
     }
+    return entries;
+}
+
+async function getSubmoduleEntries(projectPath: string): Promise<SubmoduleStatusEntry[]> {
+    if (!fs.existsSync(path.join(projectPath, '.gitmodules'))) return [];
+    const run = createGitRunner(projectPath, 20000);
+    const { stdout } = await run('git submodule status --recursive');
+    return parseSubmoduleStatus(projectPath, stdout);
+}
+
+/**
+ * Synchronise .gitmodules URLs and initialise only missing checkouts. Existing
+ * submodule worktrees are deliberately left alone so a normal Sync can never
+ * discard an edited or locally advanced checkout before it has been saved.
+ */
+async function initialiseMissingSubmodules(
+    projectPath: string,
+    auth?: GitAuthContext
+): Promise<SubmoduleStatusEntry[]> {
+    if (!fs.existsSync(path.join(projectPath, '.gitmodules'))) return [];
+    const run = createGitRunner(projectPath, 120000, auth);
+    await run('git submodule sync --recursive');
+
+    let entries = await getSubmoduleEntries(projectPath);
+    for (const entry of entries.filter((item) => item.state === 'uninitialized')) {
+        const relativePath = entry.relativePath.replace(/\\/g, '/');
+        try {
+            await run(`git submodule update --init --recursive --checkout -- "${relativePath}"`);
+        } catch (err: any) {
+            throw new Error(
+                `Could not initialise submodule "${entry.relativePath}": ${formatGitError(err)}`
+            );
+        }
+    }
+
+    entries = await getSubmoduleEntries(projectPath);
+    const unavailable = entries.filter(
+        (item) => item.state === 'uninitialized' || item.state === 'conflicted'
+    );
+    if (unavailable.length) {
+        throw new Error(
+            `Submodule checkout needs attention: ${unavailable.map((item) => item.relativePath).join(', ')}`
+        );
+    }
+    return entries;
+}
+
+function pathDepth(value: string): number {
+    return path.resolve(value).split(path.sep).length;
+}
+
+function findImmediateSubmoduleParent(
+    projectPath: string,
+    childPath: string,
+    allSubmodulePaths: string[]
+): { parentPath: string; relativePath: string } {
+    const child = path.resolve(childPath);
+    const parent = allSubmodulePaths
+        .map((candidate) => path.resolve(candidate))
+        .filter((candidate) => candidate !== child && child.startsWith(candidate + path.sep))
+        .sort((left, right) => right.length - left.length)[0] ?? path.resolve(projectPath);
+    return { parentPath: parent, relativePath: path.relative(parent, child) };
+}
+
+async function getRecordedGitlink(parentPath: string, relativePath: string): Promise<string | undefined> {
+    const run = createGitRunner(parentPath, 5000);
+    try {
+        const quotedPath = `"${relativePath.replace(/\\/g, '/').replace(/"/g, '\\"')}"`;
+        const { stdout } = await run(`git ls-tree HEAD -- ${quotedPath}`);
+        const match = stdout.match(/^160000\s+commit\s+([0-9a-f]+)/i);
+        return match?.[1];
+    } catch {
+        return undefined;
+    }
+}
+
+async function isWorkingTreeDirty(repoPath: string): Promise<boolean> {
+    const run = createGitRunner(repoPath, 5000);
+    const { stdout } = await run('git status --porcelain');
+    return stdout.trim().length > 0;
+}
+
+async function getHeadCommit(repoPath: string): Promise<string> {
+    const { stdout } = await createGitRunner(repoPath, 5000)('git rev-parse HEAD');
+    return stdout.trim();
+}
+
+async function isHeadPublished(repoPath: string, auth?: GitAuthContext): Promise<boolean> {
+    const run = createGitRunner(repoPath, 20000, auth);
+    try {
+        await withTransientRetry(() => run('git fetch --quiet --prune origin'), 'submodule-fetch', 2);
+    } catch {
+        // The normal sync below will surface authentication/network failures if
+        // the commit actually needs to be pushed.
+    }
+    try {
+        const { stdout } = await run('git branch -r --contains HEAD');
+        return stdout.trim().length > 0;
+    } catch {
+        return false;
+    }
+}
+
+async function ensureSubmoduleHasBranch(repoPath: string): Promise<string> {
+    const run = createGitRunner(repoPath, 10000);
+    const { stdout } = await run('git branch --show-current');
+    const existing = stdout.trim();
+    if (existing) return existing;
+
+    // A checked-out submodule is normally detached. If it was edited, preserve
+    // that exact base commit on a new branch instead of silently jumping to the
+    // remote default branch and losing the user's chosen pointer.
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+    const branchName = `ultraview-sync-${stamp}`;
+    await run(`git checkout -b ${branchName} HEAD`);
+    return branchName;
 }
 
 /**
@@ -1478,19 +1723,24 @@ function findNestedRepoPaths(projectPath: string, excludePaths: Set<string> = ne
  *  - Push fails for other reason → retried after re-pull; throws if still failing
  *  - Offline / temp network err→ push errors surfaced so caller can notify user
  */
-async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: string): Promise<string> {
+async function gitSync(
+    projectPath: string,
+    commitMsg?: string,
+    remoteUrl?: string,
+    auth?: GitAuthContext
+): Promise<string> {
     // ── sanity checks ────────────────────────────────────────────────────────
     clearIndexLock(projectPath);
     if (!(await isGitRepo(projectPath))) return 'Sync complete';
 
-    const run = createGitRunner(projectPath);
+    const run = createGitRunner(projectPath, 30000, auth);
 
     // Self-heal repositories affected by the former filter-branch recovery
     // before status is counted or local changes are committed.
     await removeLegacyRewriteArtifacts(projectPath, run);
 
     // ── auto-reattach detached HEAD ──────────────────────────────────────────
-    const branch = await resolveOrAttachHead(projectPath);
+    const branch = await resolveOrAttachHead(projectPath, auth);
 
     // ── recover from interrupted git state ──────────────────────────────────
     await recoverInterruptedGitState(projectPath, 'ours');
@@ -1516,7 +1766,7 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     let diverged = false;
     let workflowFilesExcluded = false;
     try {
-        const dir = await getSyncDirection(projectPath);
+        const dir = await getSyncDirection(projectPath, auth);
         ahead = dir.ahead;
         behind = dir.behind;
         diverged = dir.diverged;
@@ -1528,7 +1778,7 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
 
     // ── merge remote changes if needed ──────────────────────────────────────
     if (diverged || behind > 0) {
-        await mergeRemoteBranch(projectPath, branch, 'ours', true);
+        await mergeRemoteBranch(projectPath, branch, 'ours', true, auth);
     }
 
     // ── push ─────────────────────────────────────────────────────────────────
@@ -1542,6 +1792,7 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     let pushDone = false;
     let lastPushErr: any;
     let redirectedDuringPush = false;
+    let lfsLocksDisabledFor: string | undefined;
     while (!pushDone && pushAttempts < 4) {
         pushAttempts++;
         try {
@@ -1566,12 +1817,20 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
                 continue;
             }
 
+            // Retry once with Git LFS's documented per-host lock check disabled
+            // after ordinary transient retries have failed. The actual LFS
+            // object upload and Git push remain fully enabled.
+            if (!lfsLocksDisabledFor && isLfsLockVerificationError(errMsg)) {
+                lfsLocksDisabledFor = await disableUnsupportedLfsLockVerification(run);
+                if (lfsLocksDisabledFor) continue;
+            }
+
             // 2. Non-fast-forward → pull then retry
             if (/rejected|non-fast-forward/i.test(stderr)) {
                 // Another machine won the race. Fetch its new commit, merge it
                 // without dropping either side, then retry the push. Repeating
                 // this loop converges even when several machines sync at once.
-                await mergeRemoteBranch(projectPath, branch, 'ours');
+                await mergeRemoteBranch(projectPath, branch, 'ours', false, auth);
                 continue;
             }
 
@@ -1626,6 +1885,9 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
             noteParts.push(`remote updated to ${current}`);
         } catch { /* ignore */ }
     }
+    if (lfsLocksDisabledFor) {
+        noteParts.push(`Git LFS lock verification disabled for ${lfsLocksDisabledFor}`);
+    }
     const note = noteParts.length ? ` — ${noteParts.join(' | ')}` : '';
     if (committed && (behind > 0 || diverged)) return `Synced changes${note}`;
     if (committed) return `Changes pushed${note}`;
@@ -1633,31 +1895,107 @@ async function gitSync(projectPath: string, commitMsg?: string, remoteUrl?: stri
     return 'Up to date';
 }
 
-/** Syncs one repo safely — swallows errors so the caller's loop continues. */
-async function gitSyncSafe(projectPath: string, commitMsg?: string, remoteUrl?: string): Promise<void> {
-    try { await gitSync(projectPath, commitMsg, remoteUrl); } catch { /* never abort parent */ }
+async function syncChangedSubmodules(
+    projectPath: string,
+    commitMsg?: string,
+    auth?: GitAuthContext
+): Promise<{ paths: string[]; notes: string[] }> {
+    const entries = await initialiseMissingSubmodules(projectPath, auth);
+    const allPaths = entries.map((entry) => entry.absolutePath);
+    const notes: string[] = [];
+
+    // Deepest first is essential: a nested child's new commit becomes a dirty
+    // gitlink in its parent, which is then committed/pushed before the root repo
+    // records the parent's final pointer.
+    for (const submodulePath of [...allPaths].sort((left, right) => pathDepth(right) - pathDepth(left))) {
+        const relativeToRoot = path.relative(projectPath, submodulePath).replace(/\\/g, '/');
+        const { parentPath, relativePath } = findImmediateSubmoduleParent(
+            projectPath,
+            submodulePath,
+            allPaths
+        );
+
+        try {
+            const dirty = await isWorkingTreeDirty(submodulePath);
+            const head = await getHeadCommit(submodulePath);
+            const recorded = await getRecordedGitlink(parentPath, relativePath);
+            const pointerChanged = !!recorded && head !== recorded;
+            if (!dirty && !pointerChanged) continue;
+
+            // A clean detached checkout that points at a commit already present
+            // on a remote only needs its gitlink saved by the parent. Do not
+            // invent a branch or advance it to remote main.
+            if (!dirty && pointerChanged && await isHeadPublished(submodulePath, auth)) {
+                notes.push(`${relativeToRoot}: recorded existing commit ${head.slice(0, 8)}`);
+                continue;
+            }
+
+            await ensureSubmoduleHasBranch(submodulePath);
+            const result = await gitSync(submodulePath, commitMsg, undefined, auth);
+            notes.push(`${relativeToRoot}: ${result}`);
+        } catch (err: any) {
+            const detail = err?.code === 'NO_REMOTE'
+                ? 'it has local changes but no writable origin remote'
+                : formatGitError(err);
+            throw new Error(`Submodule "${relativeToRoot}" could not sync: ${detail}`);
+        }
+    }
+    return { paths: allPaths, notes };
 }
 
-/** Syncs the root repo plus all submodules and independent nested repos. */
-async function gitSyncAll(projectPath: string, commitMsg?: string, remoteUrl?: string): Promise<string> {
-    const result = await gitSync(projectPath, commitMsg, remoteUrl);
-
-    const submodulePaths = await findSubmodulePaths(projectPath);
-    const submoduleSet = new Set(submodulePaths);
-    for (const subPath of submodulePaths) {
-        try {
-            await createGitRunner(projectPath, 20000)(
-                `git submodule update --init -- "${subPath.replace(/\\/g, '/')}"`
+async function checkoutFinalSubmodulePointers(
+    projectPath: string,
+    auth?: GitAuthContext
+): Promise<number> {
+    if (!fs.existsSync(path.join(projectPath, '.gitmodules'))) return 0;
+    const run = createGitRunner(projectPath, 120000, auth);
+    try {
+        await run('git submodule sync --recursive');
+        await run('git submodule update --init --recursive --checkout');
+        const entries = await getSubmoduleEntries(projectPath);
+        const unsettled = entries.filter((entry) => entry.state !== 'clean');
+        if (unsettled.length) {
+            throw new Error(
+                `final pointer verification failed for ${unsettled.map((entry) => entry.relativePath).join(', ')}`
             );
-        } catch { /* ignore init failures */ }
-        await gitSyncSafe(subPath, commitMsg);
+        }
+        return entries.length;
+    } catch (err: any) {
+        throw new Error(`Could not check out final submodule pointers: ${formatGitError(err)}`);
     }
+}
 
+/**
+ * One-button transaction for a root repository and every nested repository:
+ * changed submodules are saved deepest-first, the root records their resulting
+ * pointers, and the final parent merge is then applied back to all checkouts.
+ */
+async function gitSyncAll(
+    projectPath: string,
+    commitMsg?: string,
+    remoteUrl?: string,
+    auth?: GitAuthContext
+): Promise<string> {
+    const submodules = await syncChangedSubmodules(projectPath, commitMsg, auth);
+    const submoduleSet = new Set(submodules.paths.map((item) => path.resolve(item)));
+    const nestedNotes: string[] = [];
+
+    // Preserve the Project Manager's existing support for independent nested
+    // repositories, but run them before the root so any tracked gitlink moves
+    // are included in the same parent commit and never require a second click.
     for (const nestedPath of findNestedRepoPaths(projectPath, submoduleSet)) {
-        await gitSyncSafe(nestedPath, commitMsg);
+        const result = await gitSync(nestedPath, commitMsg, undefined, auth);
+        nestedNotes.push(`${path.relative(projectPath, nestedPath)}: ${result}`);
     }
 
-    return result;
+    const result = await gitSync(projectPath, commitMsg, remoteUrl, auth);
+    const finalSubmoduleCount = await checkoutFinalSubmodulePointers(projectPath, auth);
+    const detailCount = submodules.notes.length + nestedNotes.length;
+    if (!detailCount && !finalSubmoduleCount) return result;
+
+    const details = [...submodules.notes, ...nestedNotes];
+    if (details.length) return `${result} | ${details.join(' | ')}`;
+    return `${result} | ${finalSubmoduleCount} submodule${finalSubmoduleCount === 1 ? '' : 's'} verified`;
 }
 
 export class GitProvider implements vscode.WebviewViewProvider {
@@ -2288,10 +2626,19 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     const project = this.manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
                         let syncSucceeded = false;
+                        const syncAccount = project.accountId
+                            ? await this.accounts.getAccountWithToken(project.accountId)
+                            : undefined;
+                        const syncAuth = authContextFromAccount(syncAccount);
                         try {
                             await runExclusiveProjectGitOp(project.path, async () => {
                                 try {
-                                    const result = await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
+                                    const result = await gitSyncAll(
+                                        project.path,
+                                        msg.commitMsg,
+                                        project.repoUrl,
+                                        syncAuth
+                                    );
                                     syncSucceeded = true;
                                     vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                                 } catch (err: any) {
@@ -2302,7 +2649,12 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                     );
                                     if (picked) {
                                         // Retry sync now that remote is set up
-                                        const result = await gitSyncAll(project.path, msg.commitMsg, picked);
+                                        const result = await gitSyncAll(
+                                            project.path,
+                                            msg.commitMsg,
+                                            picked,
+                                            syncAuth
+                                        );
                                         syncSucceeded = true;
                                         vscode.window.showInformationMessage(`✓ ${project.name}: ${result}`);
                                     }
@@ -3710,10 +4062,19 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     const project = manager.listProjects().find((p) => p.id === msg.id);
                     if (project) {
                         let syncSucceeded = false;
+                        const syncAccount = project.accountId
+                            ? await accounts.getAccountWithToken(project.accountId)
+                            : undefined;
+                        const syncAuth = authContextFromAccount(syncAccount);
                         try {
                             await runExclusiveProjectGitOp(project.path, async () => {
                                 try {
-                                    await gitSyncAll(project.path, msg.commitMsg, project.repoUrl);
+                                    await gitSyncAll(
+                                        project.path,
+                                        msg.commitMsg,
+                                        project.repoUrl,
+                                        syncAuth
+                                    );
                                     syncSucceeded = true;
                                 } catch (err: any) {
                                     if (err?.code !== 'NO_REMOTE') throw err;
@@ -3721,7 +4082,12 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                         project.path, project.id
                                     );
                                     if (picked) {
-                                        await gitSyncAll(project.path, msg.commitMsg, picked);
+                                        await gitSyncAll(
+                                            project.path,
+                                            msg.commitMsg,
+                                            picked,
+                                            syncAuth
+                                        );
                                         syncSucceeded = true;
                                     }
                                 }
@@ -4254,7 +4620,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                                     `${accWithToken.username}:${accWithToken.token}`
                                 ).toString('base64');
                                 await execAsync(
-                                    `git -c http.extraHeader="Authorization: Basic ${b64}" clone --no-tags "${rawUrl}" "${safeCloneName}"`,
+                                    `git -c http.extraHeader="Authorization: Basic ${b64}" clone --no-tags --recurse-submodules "${rawUrl}" "${safeCloneName}"`,
                                     { cwd: cloneDestPath, env: process.env }
                                 );
                                 cloned = true;
@@ -4263,7 +4629,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                             }
                         }
                         if (!cloned) {
-                            await execAsync(`git clone --no-tags "${rawUrl}" "${safeCloneName}"`, {
+                            await execAsync(`git clone --no-tags --recurse-submodules "${rawUrl}" "${safeCloneName}"`, {
                                 cwd: cloneDestPath,
                                 env: process.env,
                             });
@@ -4475,7 +4841,7 @@ export class GitProvider implements vscode.WebviewViewProvider {
                     urlObj.password = accWithToken.token!;
                     const cloneUrl = urlObj.toString();
 
-                    await execAsync(`git clone "${cloneUrl}" "${repoName}"`, { cwd: destPath });
+                    await execAsync(`git clone --recurse-submodules "${cloneUrl}" "${repoName}"`, { cwd: destPath });
 
                     const project = manager.addProject({
                         name: repoName,
