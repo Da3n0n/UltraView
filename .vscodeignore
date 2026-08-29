@@ -1,6 +1,8 @@
 .vscode/**
 .git-rewrite/**
 node_modules/**
+vendor/**
+.gitmodules
 src/**
 .gitignore
 .vscodeignore

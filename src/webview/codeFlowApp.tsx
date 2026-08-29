@@ -130,7 +130,7 @@ function renderHighlightedSnippet(snippet: string): ReactNode[] {
   return parts;
 }
 
-function CustomNode({ data }: { data: CustomNodeData }) {
+const CustomNode = React.memo(function CustomNode({ data }: { data: CustomNodeData }) {
   const color = TYPE_COLORS[data.nodeType] || '#888';
   const label = TYPE_LABELS[data.nodeType] || data.nodeType;
   const isFileNode = Boolean(data.isFileNode);
@@ -141,23 +141,30 @@ function CustomNode({ data }: { data: CustomNodeData }) {
   const [controlValues, setControlValues] = useState<Record<string, string | number | boolean>>(() =>
     Object.fromEntries(controls.map(control => [control.name, control.value]))
   );
-  const preventNodeDrag = (event: React.SyntheticEvent) => {
+  const highlightedSnippet = useMemo(
+    () => (snippet && isSnippetExpanded ? renderHighlightedSnippet(snippet) : null),
+    [snippet, isSnippetExpanded]
+  );
+  const preventNodeDrag = useCallback((event: React.SyntheticEvent) => {
     event.stopPropagation();
-  };
-  const sendControlUpdate = (
-    control: NonNullable<CustomNodeData['controls']>[number],
-    value: string | number | boolean
-  ) => {
-    if (!data.filePath) return;
-    getVscode()?.postMessage({
-      type: 'updateVariableControl',
-      path: data.filePath,
-      variableName: control.name,
-      value,
-      controlType: control.controlType,
-      quote: control.quote,
-    });
-  };
+  }, []);
+  const sendControlUpdate = useCallback(
+    (
+      control: NonNullable<CustomNodeData['controls']>[number],
+      value: string | number | boolean
+    ) => {
+      if (!data.filePath) return;
+      getVscode()?.postMessage({
+        type: 'updateVariableControl',
+        path: data.filePath,
+        variableName: control.name,
+        value,
+        controlType: control.controlType,
+        quote: control.quote,
+      });
+    },
+    [data.filePath]
+  );
   const snippetToggleLabel = isSnippetExpanded ? 'Hide code' : 'Show code';
 
   return (
@@ -322,16 +329,14 @@ function CustomNode({ data }: { data: CustomNodeData }) {
           overflow: 'auto',
         }}>
           {snippetStartLine ? `${snippetStartLine}| ` : ''}
-          {renderHighlightedSnippet(snippet)}
+          {highlightedSnippet}
         </pre>
       )}
     </div>
       <Handle type="source" position={Position.Right} style={{ background: color, border: 'none', width: 8, height: 8 }} />
     </>
   );
-}
-
-const nodeTypes = { custom: CustomNode, frame: FrameNode };
+});
 
 // ─── Frame Node component ─────────────────────────────────────────────────────
 
@@ -342,7 +347,7 @@ interface FrameNodeData {
   nodeType: string;
 }
 
-function FrameNode({ data }: { data: FrameNodeData }) {
+const FrameNode = React.memo(function FrameNode({ data, selected }: { data: FrameNodeData; selected?: boolean }) {
   return (
     <div style={{
       width: '100%',
@@ -357,24 +362,28 @@ function FrameNode({ data }: { data: FrameNodeData }) {
     }}>
       <Handle type="target" position={Position.Left} style={{ background: 'rgba(156,163,175,0.9)', border: 'none', width: 10, height: 10 }} />
       <Handle type="source" position={Position.Right} style={{ background: 'rgba(156,163,175,0.9)', border: 'none', width: 10, height: 10 }} />
-      <NodeResizer
-        minWidth={280}
-        minHeight={180}
-        lineStyle={{ borderColor: 'var(--vscode-focusBorder, #4ec9b0)' }}
-        handleStyle={{
-          width: 10,
-          height: 10,
-          borderRadius: 3,
-          border: 'none',
-          background: 'transparent',
-          opacity: 0,
-        }}
-      />
+      {selected && (
+        <NodeResizer
+          minWidth={280}
+          minHeight={180}
+          lineStyle={{ borderColor: 'var(--vscode-focusBorder, #4ec9b0)' }}
+          handleStyle={{
+            width: 10,
+            height: 10,
+            borderRadius: 3,
+            border: 'none',
+            background: 'transparent',
+            opacity: 0,
+          }}
+        />
+      )}
       <div style={{ fontWeight: 700, marginBottom: '4px', fontSize: '12px', color: 'var(--vscode-editor-foreground, #ddd)' }}>{data.label}</div>
       <div style={{ fontSize: '9px', opacity: 0.7 }}>{data.childCount} nodes in file</div>
     </div>
   );
-}
+});
+
+const nodeTypes = { custom: CustomNode, frame: FrameNode };
 
 // ─── Layout helper ────────────────────────────────────────────────────────────
 
@@ -762,6 +771,25 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [boxSelect, setBoxSelect] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
 
+  const nodeTypes = useMemo(() => ({ custom: CustomNode, frame: FrameNode }), []);
+
+  // Derived visible nodes/edges — avoids full setNodes copy on every filter change (perf win)
+  const displayNodes = useMemo(() => {
+    if (!visibleNodeIds) return nodes;
+    return nodes.map((node) => ({
+      ...node,
+      hidden: !visibleNodeIds.has(node.id),
+    }));
+  }, [nodes, visibleNodeIds]);
+
+  const displayEdges = useMemo(() => {
+    if (!visibleNodeIds) return edges;
+    return edges.map((edge) => ({
+      ...edge,
+      hidden: !visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target),
+    }));
+  }, [edges, visibleNodeIds]);
+
   // Keep the rendered graph in sync, but only auto-fit on first load.
   useEffect(() => {
     nodesRef.current = rfNodes;
@@ -779,17 +807,6 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
       return () => clearTimeout(timer);
     }
   }, [rfNodes, rfEdges]);
-
-  useEffect(() => {
-    setNodes((existing) => existing.map((node) => ({
-      ...node,
-      hidden: visibleNodeIds ? !visibleNodeIds.has(node.id) : false,
-    })));
-    setEdges((existing) => existing.map((edge) => ({
-      ...edge,
-      hidden: visibleNodeIds ? !visibleNodeIds.has(edge.source) || !visibleNodeIds.has(edge.target) : false,
-    })));
-  }, [visibleNodeIds, setEdges, setNodes]);
 
   const handleNodeDoubleClick = useCallback((_event: React.MouseEvent, node: { id: string; data: CustomNodeData }) => {
     const d = node.data;
@@ -867,8 +884,8 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
       }}
     >
       <ReactFlow
-        nodes={nodes}
-        edges={edges}
+        nodes={displayNodes}
+        edges={displayEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeDoubleClick={handleNodeDoubleClick}
@@ -882,7 +899,7 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
         nodesDraggable={true}
         elementsSelectable={true}
         selectNodesOnDrag={true}
-        onlyRenderVisibleElements={false}
+        onlyRenderVisibleElements={true}
         panOnDrag={[1]}
         defaultEdgeOptions={{ type: 'step', style: { strokeWidth: 2 } }}
         attributionPosition="bottom-left"
@@ -1098,12 +1115,13 @@ function App() {
           const isCall = e.kind === 'call';
           const isUse = e.kind === 'use';
           const isExport = e.kind === 'export';
+          const shouldAnimate = isCall && filteredEdges.length < 500;
           newRfEdges.push({
             id: key,
             source: e.source,
             target: e.target,
             type: isCall ? 'bezier' : 'smoothstep',
-            animated: isCall,
+            animated: shouldAnimate,
             style: {
               stroke: isImport ? '#4EC9B0' : isCall ? '#DCDCAA' : isUse ? '#7dd3fc' : isExport ? '#f9a8d4' : '#C586C0',
               strokeWidth: isCall ? 2.4 : isUse ? 1.8 : 2,
@@ -1203,9 +1221,10 @@ function App() {
             edgeSetRef.current.add(key);
             const isImport = e.kind === 'import';
             const isCall = e.kind === 'call';
+            const shouldAnimateBatch = isCall && edgeSetRef.current.size < 500;
             newRfEdges.push({
               id: key, source: e.source, target: e.target, type: 'step',
-              animated: isCall,
+              animated: shouldAnimateBatch,
               style: { stroke: isImport ? '#4EC9B0' : isCall ? '#DCDCAA' : '#C586C0', strokeWidth: 2 },
             });
           }

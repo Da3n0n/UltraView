@@ -252,6 +252,35 @@
                     "type": "string",
                     "default": "",
                     "description": "Base URL for your Dokploy instance, used by the Dokploy sidebar and browser commands."
+                },
+                "ultraview.gitNexus.autoStart": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Start the local GitNexus service when its Ultraview panel opens."
+                },
+                "ultraview.gitNexus.port": {
+                    "type": "number",
+                    "default": 4747,
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "description": "Local port used by the GitNexus UI/API service."
+                },
+                "ultraview.gitNexus.mcpPort": {
+                    "type": "number",
+                    "default": 3000,
+                    "minimum": 1024,
+                    "maximum": 65535,
+                    "description": "Local port used by the GitNexus MCP HTTP server."
+                },
+                "ultraview.gitNexus.nodePath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Optional path to a Node.js 22.18+ executable used for GitNexus."
+                },
+                "ultraview.gitNexus.embeddings": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Generate local semantic embeddings while GitNexus indexes a workspace."
                 }
             }
         },
@@ -303,6 +332,12 @@
                     "id": "ultraview.codeGraph",
                     "name": "Code Graph",
                     "icon": "$(type-hierarchy)"
+                },
+                {
+                    "type": "webview",
+                    "id": "ultraview.gitNexus",
+                    "name": "GitNexus",
+                    "icon": "$(references)"
                 }
             ],
             "ultraview-git": [
@@ -371,6 +406,36 @@
                 "command": "ultraview.openCodeGraph",
                 "title": "Ultraview: Open Code Graph as Editor",
                 "icon": "$(type-hierarchy)"
+            },
+            {
+                "command": "ultraview.openGitNexus",
+                "title": "Ultraview: Open GitNexus",
+                "icon": "$(references)"
+            },
+            {
+                "command": "ultraview.gitNexus.startServer",
+                "title": "Ultraview: Start GitNexus Local Server",
+                "icon": "$(debug-start)"
+            },
+            {
+                "command": "ultraview.gitNexus.stopServer",
+                "title": "Ultraview: Stop GitNexus Local Server",
+                "icon": "$(debug-stop)"
+            },
+            {
+                "command": "ultraview.gitNexus.analyzeWorkspace",
+                "title": "Ultraview: Analyze Workspace with GitNexus",
+                "icon": "$(search-fuzzy)"
+            },
+            {
+                "command": "ultraview.gitNexus.openCli",
+                "title": "Ultraview: Open GitNexus CLI",
+                "icon": "$(terminal)"
+            },
+            {
+                "command": "ultraview.gitNexus.startMcp",
+                "title": "Ultraview: Start GitNexus MCP Server",
+                "icon": "$(server-process)"
             },
             {
                 "command": "ultraview.quickOpenProject",
@@ -718,6 +783,9 @@
         "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
         "test": "echo \"no tests\"",
         "test:theme": "node scripts/validate-theme-roundtrip.js",
+        "gitnexus": "node scripts/gitnexus.mjs",
+        "setup:gitnexus": "node scripts/setup-gitnexus.mjs",
+        "pull:gitnexus": "node scripts/update-gitnexus.mjs",
         "vsix": "vsce package --no-dependencies",
         "release": "git add -A && git diff --staged --quiet || git commit -m \"chore: pre-release\" && npm version minor && git push && git push --tags",
         "release:patch": "git add -A && git diff --staged --quiet || git commit -m \"chore: pre-release\" && npm version patch && git push && git push --tags",

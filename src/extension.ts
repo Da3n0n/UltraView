@@ -28,6 +28,8 @@ import { DrawingProvider } from './drawings/drawingProvider';
 import { DrawingManager } from './drawings/drawingManager';
 import { configureS3BackupCredentials } from './providers/s3BackupProvider';
 import { BucketManagerProvider } from './providers/bucketManagerProvider';
+import { GitNexusProvider } from './providers/gitNexusProvider';
+import { GitNexusRuntime } from './gitNexus/runtime';
 
 let customComments: CustomComments;
 let sharedStore: SharedStore;
@@ -44,6 +46,9 @@ export async function activate(context: vscode.ExtensionContext) {
     const gitProvider = new GitProvider(context, sharedStore);
     const drawingManager = new DrawingManager(context, sharedStore);
     const drawingProvider = new DrawingProvider(context, drawingManager);
+    const gitNexusRuntime = new GitNexusRuntime(context);
+    const gitNexusProvider = new GitNexusProvider(context, gitNexusRuntime);
+    context.subscriptions.push(gitNexusRuntime, gitNexusProvider);
 
     context.subscriptions.push(
         vscode.window.registerCustomEditorProvider(
@@ -108,6 +113,11 @@ export async function activate(context: vscode.ExtensionContext) {
             new CodeGraphProvider(context),
             { webviewOptions: { retainContextWhenHidden: true } }
         ),
+        vscode.window.registerWebviewViewProvider(
+            GitNexusProvider.viewId,
+            gitNexusProvider,
+            { webviewOptions: { retainContextWhenHidden: true } }
+        ),
         vscode.window.registerWebviewViewProvider(GitProvider.viewId, gitProvider, {
             webviewOptions: { retainContextWhenHidden: true },
         }),
@@ -128,6 +138,25 @@ export async function activate(context: vscode.ExtensionContext) {
         ),
         vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
             CodeGraphProvider.openAsPanel(context);
+        }),
+        vscode.commands.registerCommand('ultraview.openGitNexus', () => {
+            gitNexusProvider.openAsPanel();
+        }),
+        vscode.commands.registerCommand('ultraview.gitNexus.startServer', async () => {
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Starting local GitNexus…' },
+                () => gitNexusRuntime.start()
+            );
+            vscode.window.showInformationMessage(`GitNexus is ready on localhost:${gitNexusRuntime.port}.`);
+        }),
+        vscode.commands.registerCommand('ultraview.gitNexus.stopServer', () => gitNexusRuntime.stop()),
+        vscode.commands.registerCommand('ultraview.gitNexus.openCli', () => gitNexusRuntime.openCli()),
+        vscode.commands.registerCommand('ultraview.gitNexus.startMcp', () => gitNexusRuntime.startMcp()),
+        vscode.commands.registerCommand('ultraview.gitNexus.analyzeWorkspace', async () => {
+            await vscode.window.withProgress(
+                { location: vscode.ProgressLocation.Notification, title: 'Analyzing workspace with GitNexus…' },
+                () => gitNexusProvider.analyzeWorkspace()
+            );
         }),
         vscode.commands.registerCommand('ultraview.openGitProjects', () => {
             GitProvider.openAsPanel(context, sharedStore);

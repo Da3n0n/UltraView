@@ -62,7 +62,8 @@ const webviewConfig = {
     commandsPanel: './src/webview/commandsPanelApp.tsx',
     portsPanel: './src/webview/portsPanelApp.tsx',
     drawings: './src/webview/drawingsApp.tsx',
-    bucketManager: './src/webview/bucketManagerApp.tsx'
+    bucketManager: './src/webview/bucketManagerApp.tsx',
+    gitNexus: './src/webview/gitNexusApp.tsx'
   },
   output: {
     path: path.resolve(__dirname, 'dist'),
