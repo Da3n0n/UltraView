@@ -1,0 +1,69 @@
+/*
+ * GitNexus webview theme — bridges the original palette with VS Code's
+ * theme variables so the panel reads naturally inside any colour scheme.
+ *
+ * Dark: pull from VS Code dark tokens when available, fall back to the
+ *   original GitNexus deep palette.
+ * Light: same idea, lighter shadows and elevated surfaces.
+ */
+
+@config "./tailwind.config.js";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --gn-bg: var(--vscode-editor-background, #0a0e1a);
+        --gn-fg: var(--vscode-editor-foreground, #e5e7eb);
+        --gn-panel: var(--vscode-sideBar-background, #0f1420);
+        --gn-border: var(--vscode-panel-border, #2a3142);
+        --gn-elevated: var(--vscode-editorWidget-background, #1a1f2e);
+        --gn-muted: var(--vscode-descriptionForeground, #6b7280);
+        --gn-link: var(--vscode-textLink-foreground, #7868ff);
+    }
+
+    html, body, #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: var(--gn-bg);
+        color: var(--gn-fg);
+        font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+        font-size: 13px;
+        line-height: 1.45;
+    }
+
+    /* Sigma.js paints into this container; make sure it fills the parent. */
+    [data-testid="sigma-canvas"] canvas {
+        display: block;
+    }
+
+    /* Sigma's tooltip / hover labels use absolute positioned divs; pick up
+     * the VS Code foreground so they read against the graph. */
+    .sigma-tooltip,
+    .sigma-labels,
+    .sigma-mouse {
+        color: var(--gn-fg);
+    }
+
+    /* Scrollbar — match VS Code */
+    *::-webkit-scrollbar { width: 8px; height: 8px; }
+    *::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background, rgba(120,120,140,.35)); border-radius: 4px; }
+    *::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground, rgba(120,120,140,.6)); }
+    *::-webkit-scrollbar-track { background: transparent; }
+}
+
+@layer utilities {
+    .bg-void { background-color: #0a0e1a; }
+    .bg-deep { background-color: #0f1420; }
+    .bg-elevated { background-color: #1a1f2e; }
+    .text-text-primary { color: var(--gn-fg); }
+    .text-text-secondary { color: #cbd5e1; }
+    .text-text-muted { color: var(--gn-muted); }
+    .border-border-subtle { border-color: var(--gn-border); }
+    .border-border-default { border-color: #3a4252; }
+}

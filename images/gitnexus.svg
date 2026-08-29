@@ -1,7 +1,34 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
-  <g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M12 5.2c-.7-1.3-2-2.2-3.5-2.2A3.5 3.5 0 0 0 5 6.5c0 .3 0 .6.1.9A3.8 3.8 0 0 0 3 10.8c0 1.3.7 2.6 1.7 3.3-.2.5-.3 1-.3 1.5A3.4 3.4 0 0 0 7.8 19c1.8 0 3.2-1.4 3.2-3.2V6.2c0-.6.4-1 1-1Z"/>
-    <path d="M12 5.2c.7-1.3 2-2.2 3.5-2.2A3.5 3.5 0 0 1 19 6.5c0 .3 0 .6-.1.9a3.8 3.8 0 0 1 2.1 3.4c0 1.3-.7 2.6-1.7 3.3.2.5.3 1 .3 1.5a3.4 3.4 0 0 1-3.4 3.4c-1.8 0-3.2-1.4-3.2-3.2V6.2c0-.6-.4-1-1-1Z"/>
-    <path d="M7 8.5c1.5 0 2.7 1.2 2.7 2.7M17 8.5c-1.5 0-2.7 1.2-2.7 2.7M7.3 14.2c1.2 0 2.2.7 2.7 1.7M16.7 14.2c-1.2 0-2.2.7-2.7 1.7"/>
+  <!--
+    GitNexus activity-bar icon — a stylised left/right hemisphere brain with
+    a few connection dots to evoke the knowledge graph inside. Matches the
+    thin-stroke style used by git.svg / drawings.svg.
+  -->
+  <g stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Center divide -->
+    <path d="M12 4.5v15" />
+    <!-- Left hemisphere curves -->
+    <path d="M12 5.4c-1.2-1-2.9-1.4-4.4-.9-1.7.6-2.8 2.2-2.7 4 .1 1 .5 1.6 1 2.1-.7.7-1.1 1.7-.9 2.8.2 1.4 1.4 2.5 2.8 2.7.3 1.4 1.5 2.5 3 2.7.6.1 1.1 0 1.2-.2" />
+    <!-- Left hemisphere folds -->
+    <path d="M9 8.2c.7-.1 1.4.1 2 .5" />
+    <path d="M8.2 12.5c.9-.2 1.8 0 2.5.5" />
+    <path d="M9.4 16.2c.7 0 1.4.2 2 .7" />
+    <!-- Right hemisphere curves -->
+    <path d="M12 5.4c1.2-1 2.9-1.4 4.4-.9 1.7.6 2.8 2.2 2.7 4-.1 1-.5 1.6-1 2.1.7.7 1.1 1.7.9 2.8-.2 1.4-1.4 2.5-2.8 2.7-.3 1.4-1.5 2.5-3 2.7-.6.1-1.1 0-1.2-.2" />
+    <!-- Right hemisphere folds -->
+    <path d="M15 8.2c-.7-.1-1.4.1-2 .5" />
+    <path d="M15.8 12.5c-.9-.2-1.8 0-2.5.5" />
+    <path d="M14.6 16.2c-.7 0-1.4.2-2 .7" />
+  </g>
+  <!-- Three graph nodes connected to the brain to hint at the knowledge graph -->
+  <g fill="currentColor">
+    <circle cx="4" cy="6" r="1.1" />
+    <circle cx="20" cy="6" r="1.1" />
+    <circle cx="12" cy="20.5" r="1.1" />
+  </g>
+  <g stroke="currentColor" stroke-width="0.9" stroke-linecap="round" opacity="0.65">
+    <line x1="5.2" y1="6.4" x2="7" y2="8" />
+    <line x1="18.8" y1="6.4" x2="17" y2="8" />
+    <line x1="12" y1="19.2" x2="12" y2="17" />
   </g>
 </svg>

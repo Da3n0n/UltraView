@@ -23,6 +23,7 @@ export class GitNexusClient {
                 const data = text ? JSON.parse(text) : undefined;
                 if (!response.ok) {
                     const message = String(data?.error ?? data?.message ?? `GitNexus returned HTTP ${response.status}`);
+                    // cspell:disable-next-line -- lbug is the @ladybugdb/core package namespace surfaced in error messages
                     const transient = /checkpoint is in progress|database is locked|lbug\.shadow|temporarily unavailable/i.test(message);
                     if (canRetry && transient && attempt < 8) {
                         await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));

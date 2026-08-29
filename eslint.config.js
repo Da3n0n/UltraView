@@ -23,6 +23,9 @@ export default [
         fetch: 'readonly',
         Response: 'readonly',
         Request: 'readonly',
+        RequestInit: 'readonly',
+        AbortController: 'readonly',
+        AbortSignal: 'readonly',
         // VS Code globals
         acquireVsCodeApi: 'readonly',
         // Additional Node types
