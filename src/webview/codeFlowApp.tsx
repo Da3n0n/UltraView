@@ -392,6 +392,21 @@ interface LayoutResult {
   framePositions: Map<string, { x: number; y: number; width: number; height: number }>;
 }
 
+interface SavedNodeLayout {
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+}
+
+interface CodeFlowViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+type SavedCodeFlowLayout = Record<string, SavedNodeLayout>;
+
 function getParentFile(node: CodeNode): string | undefined {
   if (typeof node.parentId === 'string' && node.parentId) return node.parentId;
   const metaParent = node.meta?.parent;
@@ -595,10 +610,10 @@ function layoutGraph(nodes: CodeNode[], edges: CodeEdge[]): LayoutResult {
   const framePaddingX = 32;
   const framePaddingY = 28;
   const frameHeaderHeight = 78;
-  const innerGapY = 24;
-  const cardWidth = 280;
-  const frameSpacingX = 128;
-  const frameSpacingY = 96;
+  const innerGapX = 28;
+  const innerGapY = 22;
+  const cardWidth = 250;
+  const frameSpacingX = 144;
   const startX = 72;
   const startY = 60;
   const frameIds = Array.from(fileGroups.keys());
@@ -627,20 +642,26 @@ function layoutGraph(nodes: CodeNode[], edges: CodeEdge[]): LayoutResult {
     });
     const cardHeights = cards.map(estimateNodeCardHeight);
 
-    const frameWidth = Math.max(372, framePaddingX * 2 + cardWidth);
-    const contentHeight = cardHeights.reduce((sum, height) => sum + height, 0);
-    const frameHeight = Math.max(
-      220,
-      frameHeaderHeight + framePaddingY * 2 + contentHeight + Math.max(0, cards.length - 1) * innerGapY
-    );
+    // Keep the semantic lane ordering, but flow cards into compact horizontal
+    // columns. The old single column made every shallow graph visually vertical.
+    const columnCount = Math.min(6, Math.max(1, Math.ceil(cards.length / 5)));
+    const rowsPerColumn = Math.max(1, Math.ceil(cards.length / columnCount));
+    const columnHeights = Array.from({ length: columnCount }, () => 0);
 
-    let currentY = frameHeaderHeight + framePaddingY;
     cards.forEach((node, index) => {
-      const x = framePaddingX;
-      const y = currentY;
+      const column = Math.min(columnCount - 1, Math.floor(index / rowsPerColumn));
+      const x = framePaddingX + column * (cardWidth + innerGapX);
+      const y = frameHeaderHeight + framePaddingY + columnHeights[column];
       nodePositions.set(node.id, { x, y });
-      currentY += cardHeights[index] + innerGapY;
+      columnHeights[column] += cardHeights[index] + innerGapY;
     });
+
+    const frameWidth = Math.max(
+      350,
+      framePaddingX * 2 + columnCount * cardWidth + Math.max(0, columnCount - 1) * innerGapX
+    );
+    const tallestColumn = Math.max(0, ...columnHeights) - (cards.length > 0 ? innerGapY : 0);
+    const frameHeight = Math.max(220, frameHeaderHeight + framePaddingY * 2 + tallestColumn);
 
     frameBoxes.set(filePath, { width: frameWidth, height: frameHeight });
     const frameLayer = frameLayers.get(filePath) ?? 0;
@@ -655,23 +676,43 @@ function layoutGraph(nodes: CodeNode[], edges: CodeEdge[]): LayoutResult {
     const layerFrames = framesByLayer.get(layer) ?? [];
     layerFrames.sort((a, b) => compareByFlowPriority(a, b, frameGraph.indegree, frameGraph.outdegree, frameLabels));
 
-    let frameY = startY;
-    let maxWidthInLayer = 0;
+    // A dependency rank is a horizontal band, not a vertical column. Large
+    // ranks wrap into at most three balanced rows so the canvas stays readable
+    // without recreating the old unbounded vertical wall.
+    const rowCount = Math.min(3, Math.max(1, Math.ceil(layerFrames.length / 6)));
+    const rows = Array.from({ length: rowCount }, () => [] as string[]);
+    const rowWidths = Array.from({ length: rowCount }, () => 0);
+    const rowHeights = Array.from({ length: rowCount }, () => 0);
 
     for (const filePath of layerFrames) {
       const frameBox = frameBoxes.get(filePath);
       if (!frameBox) continue;
-      framePositions.set(filePath, {
-        x: frameX,
-        y: frameY,
-        width: frameBox.width,
-        height: frameBox.height,
-      });
-      frameY += frameBox.height + frameSpacingY;
-      maxWidthInLayer = Math.max(maxWidthInLayer, frameBox.width);
+      let row = 0;
+      for (let index = 1; index < rowCount; index++) {
+        if (rowWidths[index] < rowWidths[row]) row = index;
+      }
+      rows[row].push(filePath);
+      rowWidths[row] += frameBox.width + frameSpacingX;
+      rowHeights[row] = Math.max(rowHeights[row], frameBox.height);
     }
 
-    frameX += maxWidthInLayer + frameSpacingX;
+    let rowY = startY;
+    rows.forEach((rowFrames, row) => {
+      let rowX = frameX;
+      for (const filePath of rowFrames) {
+        const frameBox = frameBoxes.get(filePath)!;
+        framePositions.set(filePath, {
+          x: rowX,
+          y: rowY,
+          width: frameBox.width,
+          height: frameBox.height,
+        });
+        rowX += frameBox.width + frameSpacingX;
+      }
+      rowY += rowHeights[row] + 96;
+    });
+
+    frameX += Math.max(0, ...rowWidths) + frameSpacingX;
   }
 
   return { nodePositions, framePositions };
@@ -756,16 +797,31 @@ interface FlowGraphProps {
   visibleNodeIds?: Set<string> | null;
   onNodeOpen: (node: CodeNode) => void;
   onSelectionChange: (selectedIds: string[]) => void;
+  onLayoutChange: (layout: SavedCodeFlowLayout) => void;
+  onViewportChange: (viewport: CodeFlowViewport) => void;
+  initialViewport: CodeFlowViewport | null;
+  layoutRevision: number;
 }
 
-const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNodeOpen, onSelectionChange }) => {
+const FlowGraph: FC<FlowGraphProps> = ({
+  rfNodes,
+  rfEdges,
+  visibleNodeIds,
+  onNodeOpen,
+  onSelectionChange,
+  onLayoutChange,
+  onViewportChange,
+  initialViewport,
+  layoutRevision,
+}) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
   const { fitView, getNodes, screenToFlowPosition } = useReactFlow();
   const fitPendingRef = useRef(false);
-  const hasAutoFitRef = useRef(false);
+  const lastFittedRevisionRef = useRef(initialViewport ? 0 : -1);
+  const saveLayoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nodesRef = useRef(rfNodes);
   const edgesRef = useRef(rfEdges);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -790,23 +846,61 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
     }));
   }, [edges, visibleNodeIds]);
 
-  // Keep the rendered graph in sync, but only auto-fit on first load.
+  const persistLayout = useCallback(() => {
+    if (saveLayoutTimerRef.current) clearTimeout(saveLayoutTimerRef.current);
+    saveLayoutTimerRef.current = setTimeout(() => {
+      const layout: SavedCodeFlowLayout = {};
+      for (const node of getNodes()) {
+        const measured = node as { width?: number; height?: number; measured?: { width?: number; height?: number } };
+        layout[node.id] = {
+          x: node.position.x,
+          y: node.position.y,
+          width: measured.width ?? measured.measured?.width,
+          height: measured.height ?? measured.measured?.height,
+        };
+      }
+      onLayoutChange(layout);
+    }, 180);
+  }, [getNodes, onLayoutChange]);
+
+  useEffect(() => () => {
+    if (saveLayoutTimerRef.current) clearTimeout(saveLayoutTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    const handleFit = () => fitView({ padding: 0.16, duration: 280 });
+    window.addEventListener('codeflow:fit', handleFit);
+    return () => window.removeEventListener('codeflow:fit', handleFit);
+  }, [fitView]);
+
+  // Keep the rendered graph in sync. A restored viewport is left untouched;
+  // generated layouts are fitted once per explicit layout revision.
   useEffect(() => {
     nodesRef.current = rfNodes;
     edgesRef.current = rfEdges;
     setNodes(rfNodes as never[]);
     setEdges(rfEdges as never[]);
 
-    if (rfNodes.length > 0 && !fitPendingRef.current && !hasAutoFitRef.current) {
+    if (rfNodes.length > 0 && !fitPendingRef.current && lastFittedRevisionRef.current !== layoutRevision) {
       fitPendingRef.current = true;
       const timer = setTimeout(() => {
-        fitView({ padding: 0.2, duration: 0 });
+        fitView({ padding: 0.16, duration: layoutRevision === 0 ? 0 : 280 });
         fitPendingRef.current = false;
-        hasAutoFitRef.current = true;
+        lastFittedRevisionRef.current = layoutRevision;
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [rfNodes, rfEdges]);
+  }, [rfNodes, rfEdges, layoutRevision]);
+
+  const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
+    onNodesChange(changes);
+    if (changes.some((change) => (
+      (change.type === 'position' && change.dragging === false)
+      || (change.type === 'dimensions' && change.resizing !== true)
+    ))) {
+      requestAnimationFrame(persistLayout);
+    }
+  }, [onNodesChange, persistLayout]);
 
   const handleNodeDoubleClick = useCallback((_event: React.MouseEvent, node: { id: string; data: CustomNodeData }) => {
     const d = node.data;
@@ -886,13 +980,16 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
       <ReactFlow
         nodes={displayNodes}
         edges={displayEdges}
-        onNodesChange={onNodesChange}
+        onNodesChange={handleNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodeDragStop={() => requestAnimationFrame(persistLayout)}
         onNodeDoubleClick={handleNodeDoubleClick}
         onSelectionChange={({ nodes: selectedNodes }) => {
           onSelectionChange(selectedNodes.map((node) => node.id));
         }}
         nodeTypes={nodeTypes}
+        defaultViewport={initialViewport ?? { x: 0, y: 0, zoom: 1 }}
+        onMoveEnd={(_event, viewport) => onViewportChange(viewport)}
         fitView={false}
         minZoom={0.2}
         maxZoom={2.2}
@@ -901,11 +998,38 @@ const FlowGraph: FC<FlowGraphProps> = ({ rfNodes, rfEdges, visibleNodeIds, onNod
         selectNodesOnDrag={true}
         onlyRenderVisibleElements={true}
         panOnDrag={[1]}
-        defaultEdgeOptions={{ type: 'step', style: { strokeWidth: 2 } }}
+        defaultEdgeOptions={{ type: 'bezier', style: { strokeWidth: 2 } }}
         attributionPosition="bottom-left"
         style={{ background: 'var(--vscode-editor-background, #1e1e1e)' }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+        <Panel position="bottom-right">
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '6px 10px',
+            maxWidth: 360,
+            padding: '6px 8px',
+            borderRadius: 7,
+            background: 'color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 88%, transparent)',
+            border: '1px solid var(--vscode-panel-border, rgba(128,128,128,.3))',
+            color: 'var(--vscode-descriptionForeground, #aaa)',
+            fontSize: 10,
+          }}>
+            {[
+              ['#818cf8', 'file link'],
+              ['#4EC9B0', 'import'],
+              ['#DCDCAA', 'call'],
+              ['#7dd3fc', 'use'],
+              ['#f9a8d4', 'export'],
+            ].map(([color, label]) => (
+              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ width: 13, height: 2, borderRadius: 2, background: color }} />
+                {label}
+              </span>
+            ))}
+          </div>
+        </Panel>
       </ReactFlow>
       {boxSelect && (
         <div
@@ -935,6 +1059,8 @@ interface VsCodeApi {
 interface InitialCodeGraphState {
   showFns?: boolean;
   filterText?: string;
+  codeFlowLayout?: SavedCodeFlowLayout;
+  codeFlowViewport?: CodeFlowViewport | null;
 }
 
 function buildSearchVisibleIds(
@@ -1001,8 +1127,10 @@ function getVscode(): VsCodeApi | undefined {
 
 function App() {
   const initialShowFns = window.__ultraviewCodeGraphState?.showFns ?? false;
+  const initialViewport = window.__ultraviewCodeGraphState?.codeFlowViewport ?? null;
   const [rfNodes, setRfNodes] = useState<unknown[]>([]);
   const [rfEdges, setRfEdges] = useState<unknown[]>([]);
+  const [layoutRevision, setLayoutRevision] = useState(0);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [phase, setPhase] = useState<string>('waiting');
   const [progress, setProgress] = useState({ scanned: 0, total: 0 });
@@ -1015,6 +1143,31 @@ function App() {
   const edgeAccRef = useRef<unknown[]>([]);
   const nodeCountRef = useRef(0);
   const edgeSetRef = useRef(new Set<string>());
+  const savedLayoutRef = useRef<SavedCodeFlowLayout>(window.__ultraviewCodeGraphState?.codeFlowLayout ?? {});
+  const relayoutPendingRef = useRef(false);
+
+  const handleLayoutChange = useCallback((layout: SavedCodeFlowLayout) => {
+    savedLayoutRef.current = layout;
+    getVscode()?.postMessage({ type: 'saveProjectState', state: { codeFlowLayout: layout } });
+  }, []);
+
+  const handleViewportChange = useCallback((viewport: CodeFlowViewport) => {
+    getVscode()?.postMessage({ type: 'saveProjectState', state: { codeFlowViewport: viewport } });
+  }, []);
+
+  useEffect(() => {
+    const handleRelayout = () => {
+      savedLayoutRef.current = {};
+      relayoutPendingRef.current = true;
+      getVscode()?.postMessage({
+        type: 'saveProjectState',
+        state: { codeFlowLayout: {}, codeFlowViewport: null },
+      });
+      getVscode()?.postMessage({ type: 'requestGraph' });
+    };
+    window.addEventListener('codeflow:relayout', handleRelayout);
+    return () => window.removeEventListener('codeflow:relayout', handleRelayout);
+  }, []);
 
   useEffect(() => {
     const searchInput = document.getElementById('search') as HTMLInputElement | null;
@@ -1060,14 +1213,16 @@ function App() {
         // Add frame nodes
         for (const [filePath, framePos] of layout.framePositions) {
           if (!filteredGraph.allowedFrameFiles.has(filePath)) continue;
-          const childCount = frameGroups.get(filePath)?.length ?? 0;
+          const childCount = (frameGroups.get(filePath) ?? []).filter((node) => node.id !== filePath).length;
+          const frameId = `frame:${filePath}`;
+          const savedFrame = savedLayoutRef.current[frameId];
           newRfNodes.push({
-            id: `frame:${filePath}`,
+            id: frameId,
             type: 'frame',
-            position: { x: framePos.x, y: framePos.y },
+            position: savedFrame ? { x: savedFrame.x, y: savedFrame.y } : { x: framePos.x, y: framePos.y },
             style: {
-              width: framePos.width,
-              height: framePos.height,
+              width: savedFrame?.width ?? framePos.width,
+              height: savedFrame?.height ?? framePos.height,
               background: 'transparent',
               border: 'none',
               overflow: 'visible',
@@ -1083,11 +1238,12 @@ function App() {
           if (node.id === parentFile) continue;
           const pos = layout.nodePositions.get(node.id);
           if (!pos) continue;
+          const savedNode = savedLayoutRef.current[node.id];
           const line = typeof node.meta?.line === 'number' ? node.meta.line : undefined;
           newRfNodes.push({
             id: node.id,
             type: 'custom',
-            position: pos,
+            position: savedNode ? { x: savedNode.x, y: savedNode.y } : pos,
             data: {
               label: node.label,
               nodeType: node.type,
@@ -1120,7 +1276,7 @@ function App() {
             id: key,
             source: e.source,
             target: e.target,
-            type: isCall ? 'bezier' : 'smoothstep',
+            type: 'bezier',
             animated: shouldAnimate,
             style: {
               stroke: isImport ? '#4EC9B0' : isCall ? '#DCDCAA' : isUse ? '#7dd3fc' : isExport ? '#f9a8d4' : '#C586C0',
@@ -1142,11 +1298,12 @@ function App() {
             id: frameKey,
             source: `frame:${sourceFrame}`,
             target: `frame:${targetFrame}`,
-            type: 'smoothstep',
+            type: 'bezier',
             animated: false,
             style: {
-              stroke: 'rgba(156,163,175,0.35)',
-              strokeWidth: 1.4,
+              stroke: 'rgba(129,140,248,0.55)',
+              strokeWidth: 1.6,
+              strokeDasharray: '7 5',
             },
             zIndex: 0,
           });
@@ -1156,6 +1313,10 @@ function App() {
         edgeAccRef.current = newRfEdges;
         setRfNodes(newRfNodes);
         setRfEdges(newRfEdges);
+        if (relayoutPendingRef.current) {
+          relayoutPendingRef.current = false;
+          setLayoutRevision((revision) => revision + 1);
+        }
         setPhase('done');
         setProgress({ scanned: filteredNodes.length, total: filteredNodes.length });
         return;
@@ -1223,7 +1384,7 @@ function App() {
             const isCall = e.kind === 'call';
             const shouldAnimateBatch = isCall && edgeSetRef.current.size < 500;
             newRfEdges.push({
-              id: key, source: e.source, target: e.target, type: 'step',
+              id: key, source: e.source, target: e.target, type: 'bezier',
               animated: shouldAnimateBatch,
               style: { stroke: isImport ? '#4EC9B0' : isCall ? '#DCDCAA' : '#C586C0', strokeWidth: 2 },
             });
@@ -1373,6 +1534,10 @@ function App() {
           visibleNodeIds={visibleNodeIds}
           onNodeOpen={handleNodeOpen}
           onSelectionChange={setSelectedNodeIds}
+          onLayoutChange={handleLayoutChange}
+          onViewportChange={handleViewportChange}
+          initialViewport={initialViewport}
+          layoutRevision={layoutRevision}
         />
         <Panel position="top-right" style={{ fontSize: '11px', color: 'var(--vscode-descriptionForeground, #888)' }}>
           {summaryText}

@@ -39,6 +39,13 @@ interface ProjectCodeGraphState {
   springLength: number;
   damping: number;
   centerPull: number;
+  codeFlowLayout: Record<string, {
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+  }>;
+  codeFlowViewport: { x: number; y: number; zoom: number } | null;
 }
 
 const PROJECT_GRAPH_STATE_KEY = 'ultraview.codeGraph.uiState.v1';
@@ -54,7 +61,9 @@ const defaultProjectCodeGraphState: ProjectCodeGraphState = {
   repulsion: 9000,
   springLength: 130,
   damping: 0.65,
-  centerPull: 0.008
+  centerPull: 0.008,
+  codeFlowLayout: {},
+  codeFlowViewport: null
 };
 
 function getProjectGraphState(ctx: vscode.ExtensionContext): ProjectCodeGraphState {
@@ -72,10 +81,17 @@ async function saveProjectGraphState(
   ctx: vscode.ExtensionContext,
   partial: Partial<ProjectCodeGraphState>
 ): Promise<ProjectCodeGraphState> {
-  const nextState = { ...getProjectGraphState(ctx), ...partial };
-  await ctx.workspaceState.update(PROJECT_GRAPH_STATE_KEY, nextState);
-  return nextState;
+  let savedState = defaultProjectCodeGraphState;
+  const write = projectGraphStateWriteQueue.then(async () => {
+    savedState = { ...getProjectGraphState(ctx), ...partial };
+    await ctx.workspaceState.update(PROJECT_GRAPH_STATE_KEY, savedState);
+  });
+  projectGraphStateWriteQueue = write.catch(() => undefined);
+  await write;
+  return savedState;
 }
+
+let projectGraphStateWriteQueue: Promise<unknown> = Promise.resolve();
 
 // ─── Parser ──────────────────────────────────────────────────────────────────
 
@@ -1583,6 +1599,8 @@ function buildCodeFlowHtml(
 <div id="toolbar">
   <button class="tbtn active" id="btn-normal" title="Switch to Normal Graph">Normal</button>
   <input id="search" placeholder="Search functions…" style="flex:1;min-width:0;padding:3px 7px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,rgba(128,128,128,.4));border-radius:4px;font-size:11px"/>
+  <button class="tbtn" id="btn-fit" title="Fit the current layout in view">Fit</button>
+  <button class="tbtn" id="btn-layout" title="Generate a fresh left-to-right layout">Auto layout</button>
   <button class="tbtn" id="btn-refresh" title="Refresh">↻</button>
 </div>
 <div id="app-wrap">
@@ -1604,6 +1622,12 @@ function buildCodeFlowHtml(
     });
     document.getElementById('btn-refresh').addEventListener('click', function() {
       vscode.postMessage({ type: 'requestGraph' });
+    });
+    document.getElementById('btn-fit').addEventListener('click', function() {
+      window.dispatchEvent(new CustomEvent('codeflow:fit'));
+    });
+    document.getElementById('btn-layout').addEventListener('click', function() {
+      window.dispatchEvent(new CustomEvent('codeflow:relayout'));
     });
   })();
 </script>
