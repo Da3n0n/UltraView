@@ -3,8 +3,8 @@ import type { GitNexusGraph, GitNexusRepository } from './types';
 export class GitNexusClient {
     constructor(private readonly port: number) {}
 
-    private async request<T>(pathname: string, init?: RequestInit): Promise<T> {
-        const canRetry = !init?.method || init.method === 'GET';
+    private async request<T>(pathname: string, init?: RequestInit, retryTransient = false): Promise<T> {
+        const canRetry = retryTransient || !init?.method || init.method === 'GET';
         for (let attempt = 0; ; attempt++) {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -52,6 +52,13 @@ export class GitNexusClient {
 
     graph(repository: string): Promise<GitNexusGraph> {
         return this.request(`/api/graph?repo=${encodeURIComponent(repository)}`);
+    }
+
+    async waitUntilReadable(repository: string): Promise<void> {
+        await this.request(`/api/query?repo=${encodeURIComponent(repository)}`, {
+            method: 'POST',
+            body: JSON.stringify({ cypher: 'MATCH (n) RETURN count(n) AS count' }),
+        }, true);
     }
 
     async clusters(repository: string): Promise<unknown[]> {

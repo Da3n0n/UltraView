@@ -1,4 +1,5 @@
 .vscode/**
+.gitnexus/**
 .git-rewrite/**
 node_modules/**
 vendor/**

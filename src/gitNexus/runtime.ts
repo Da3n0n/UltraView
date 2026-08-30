@@ -8,6 +8,7 @@ import type { GitNexusRuntimeStatus } from './types';
 
 const execFileAsync = promisify(execFile);
 const RUNTIME_LAYOUT_VERSION = 2;
+const SERVER_PID_KEY = 'ultraview.gitNexus.serverPid';
 function shellQuote(value: string): string {
     return `"${value.replace(/"/g, '\\"')}"`;
 }
@@ -23,6 +24,7 @@ function validNodeVersion(raw: string): boolean {
 export class GitNexusRuntime implements vscode.Disposable {
     private process?: ChildProcess;
     private installing?: Promise<string>;
+    private starting?: Promise<void>;
     private readonly output = vscode.window.createOutputChannel('Ultraview GitNexus');
     private readonly changed = new vscode.EventEmitter<GitNexusRuntimeStatus>();
     readonly onDidChangeStatus = this.changed.event;
@@ -161,23 +163,39 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     async start(): Promise<void> {
+        if (this.starting) return this.starting;
+        const starting = this.startOnce();
+        this.starting = starting;
+        try {
+            await starting;
+        } finally {
+            if (this.starting === starting) this.starting = undefined;
+        }
+    }
+
+    private async startOnce(): Promise<void> {
         if ((await this.status()).running) return;
         const cli = this.findCli() ?? await this.install();
         const node = await this.assertNode();
         this.output.appendLine(`Starting GitNexus at http://127.0.0.1:${this.port}`);
-        this.process = spawn(node, [cli, 'serve', '--host', '127.0.0.1', '--port', String(this.port)], {
+        const child = spawn(node, [cli, 'serve', '--host', '127.0.0.1', '--port', String(this.port)], {
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath,
             windowsHide: true,
             env: { ...process.env, NO_COLOR: '1' },
         });
-        this.process.stdout?.on('data', data => this.output.append(data.toString()));
-        this.process.stderr?.on('data', data => this.output.append(data.toString()));
-        this.process.once('exit', code => {
+        this.process = child;
+        if (child.pid) await this.context.globalState.update(SERVER_PID_KEY, child.pid);
+        child.stdout?.on('data', data => this.output.append(data.toString()));
+        child.stderr?.on('data', data => this.output.append(data.toString()));
+        child.once('exit', code => {
             this.output.appendLine(`GitNexus server stopped (${code ?? 'signal'}).`);
-            this.process = undefined;
+            if (this.process === child) this.process = undefined;
+            if (this.context.globalState.get<number>(SERVER_PID_KEY) === child.pid) {
+                void this.context.globalState.update(SERVER_PID_KEY, undefined);
+            }
             void this.status().then(status => this.changed.fire(status));
         });
-        this.process.once('error', error => this.output.appendLine(`Server error: ${error.message}`));
+        child.once('error', error => this.output.appendLine(`Server error: ${error.message}`));
 
         const deadline = Date.now() + 25_000;
         while (Date.now() < deadline) {
@@ -196,7 +214,102 @@ export class GitNexusRuntime implements vscode.Disposable {
     stop(): void {
         this.process?.kill();
         this.process = undefined;
+        void this.context.globalState.update(SERVER_PID_KEY, undefined);
         void this.status().then(status => this.changed.fire(status));
+    }
+
+    async restart(checkpointWorkspace?: string): Promise<void> {
+        // A server left behind by a previous extension host can keep LadybugDB's
+        // checkpoint open. Verify that this port is GitNexus before recycling it.
+        await this.client.info();
+        const pid = this.process?.pid ?? this.context.globalState.get<number>(SERVER_PID_KEY) ?? await this.findListeningPid();
+        if (!pid || pid === process.pid) throw new Error('Could not identify the local GitNexus server process to restart.');
+
+        this.output.appendLine(`Restarting GitNexus server process ${pid} to release its saved database checkpoint.`);
+        try {
+            process.kill(pid, 'SIGTERM');
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code !== 'ESRCH') throw error;
+        }
+        this.process = undefined;
+        await this.context.globalState.update(SERVER_PID_KEY, undefined);
+
+        for (let attempt = 0; attempt < 20; attempt++) {
+            if (!(await this.status()).running) break;
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+        if ((await this.status()).running) {
+            process.kill(pid, 'SIGKILL');
+            await new Promise(resolve => setTimeout(resolve, 250));
+        }
+        if (checkpointWorkspace) await this.parkTinyCheckpointSidecars(checkpointWorkspace);
+        await this.start();
+    }
+
+    private async parkTinyCheckpointSidecars(workspacePath: string): Promise<void> {
+        const databasePath = path.join(workspacePath, '.gitnexus', 'lbug');
+        const walPath = `${databasePath}.wal`;
+        const shadowPath = `${databasePath}.shadow`;
+        let wal: fs.Stats;
+        try {
+            wal = await fs.promises.stat(walPath);
+            await fs.promises.stat(shadowPath);
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+            throw error;
+        }
+        // GitNexus itself defines <= 4 KiB as a tiny orphan WAL: it contains no
+        // meaningful pending graph pages. Never park a larger WAL automatically.
+        if (wal.size > 4 * 1024) {
+            throw new Error(`GitNexus left a ${wal.size}-byte WAL. It is too large for safe automatic checkpoint recovery; use Analyze workspace to rebuild it.`);
+        }
+        const suffix = `.ultraview-recovery-${Date.now()}`;
+        await fs.promises.rename(walPath, walPath + suffix);
+        try {
+            await fs.promises.rename(shadowPath, shadowPath + suffix);
+        } catch (error) {
+            await fs.promises.rename(walPath + suffix, walPath);
+            throw error;
+        }
+        this.output.appendLine(`Parked a tiny orphan WAL and stale checkpoint sidecar for ${workspacePath}; the saved graph database was preserved.`);
+    }
+
+    private async findListeningPid(): Promise<number | undefined> {
+        if (process.platform === 'win32') {
+            const { stdout } = await execFileAsync('netstat', ['-ano', '-p', 'tcp'], { windowsHide: true });
+            for (const line of stdout.split(/\r?\n/)) {
+                if (!/\bLISTENING\b/i.test(line)) continue;
+                const parts = line.trim().split(/\s+/);
+                const port = Number(parts[1]?.split(':').pop());
+                const pid = Number(parts.at(-1));
+                if (port === this.port && Number.isInteger(pid) && pid > 0) return pid;
+            }
+            return undefined;
+        }
+        try {
+            const { stdout } = await execFileAsync('lsof', ['-tiTCP:' + this.port, '-sTCP:LISTEN'], { windowsHide: true });
+            const pid = Number(stdout.trim().split(/\s+/)[0]);
+            return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    async integrationInfo(): Promise<{
+        nodePath: string;
+        cliPath: string;
+        workspacePath: string;
+        mcpPort: number;
+    }> {
+        const cliPath = this.findCli() ?? await this.install();
+        const nodePath = await this.assertNode();
+        return {
+            nodePath,
+            cliPath,
+            workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '',
+            mcpPort: this.mcpPort,
+        };
     }
 
     private async terminalCommand(args: string[], name: string): Promise<void> {
@@ -205,9 +318,17 @@ export class GitNexusRuntime implements vscode.Disposable {
         const terminal = vscode.window.createTerminal({
             name,
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri,
+            env: args[0] === 'mcp' && vscode.workspace.workspaceFolders?.[0]
+                ? {
+                    GITNEXUS_MCP_ALLOWED_REPOS: vscode.workspace.workspaceFolders[0].uri.fsPath,
+                    GITNEXUS_MCP_DEFAULT_REPO: vscode.workspace.workspaceFolders[0].uri.fsPath,
+                }
+                : undefined,
         });
         terminal.show();
-        terminal.sendText([shellQuote(node), shellQuote(cli), ...args.map(shellQuote)].join(' '));
+        const invocation = [shellQuote(node), shellQuote(cli), ...args.map(shellQuote)].join(' ');
+        const powershell = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(vscode.env.shell);
+        terminal.sendText(`${powershell ? '& ' : ''}${invocation}`);
     }
 
     openCli(): Promise<void> {

@@ -22,6 +22,7 @@ function webviewHtml(context: vscode.ExtensionContext, webview: vscode.Webview):
 export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     static readonly viewId = 'ultraview.gitNexus';
     private readonly webviews = new Set<vscode.Webview>();
+    private workspaceReadyInFlight?: Promise<boolean>;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -71,29 +72,66 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
         for (const webview of this.webviews) void webview.postMessage(message);
     }
 
-    private async openOriginalUi(webview: vscode.Webview): Promise<void> {
+    private canUpdateVendor(): boolean {
+        return fs.existsSync(path.join(this.context.extensionPath, 'scripts', 'update-gitnexus.mjs'))
+            && fs.existsSync(path.join(this.context.extensionPath, 'vendor', 'GitNexus', '.git'));
+    }
+
+    private async ensureWorkspaceReady(webview: vscode.Webview): Promise<boolean> {
+        if (this.workspaceReadyInFlight) return this.workspaceReadyInFlight;
+        const pending = this.prepareWorkspace(webview);
+        this.workspaceReadyInFlight = pending;
+        try {
+            return await pending;
+        } finally {
+            if (this.workspaceReadyInFlight === pending) this.workspaceReadyInFlight = undefined;
+        }
+    }
+
+    private async prepareWorkspace(webview: vscode.Webview): Promise<boolean> {
         await this.runtime.start();
         const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        let autoAnalyzed = false;
+        if (!workspacePath) return false;
 
-        if (workspacePath) {
-            const repositories = await this.runtime.client.repositories();
-            const indexed = repositories.some(repo => {
-                const candidate = repo.repoPath || repo.path;
-                return Boolean(candidate) && path.resolve(candidate!).toLowerCase() === path.resolve(workspacePath).toLowerCase();
-            });
-            if (!indexed) {
-                autoAnalyzed = true;
-                await this.analyze(webview, false);
-            }
+        const repositories = await this.runtime.client.repositories();
+        const indexed = repositories.some(repo => {
+            const candidate = repo.repoPath || repo.path;
+            return Boolean(candidate) && path.resolve(candidate!).toLowerCase() === path.resolve(workspacePath).toLowerCase();
+        });
+        if (!indexed) {
+            await this.analyze(webview, false);
+            return true;
         }
+
+        try {
+            await this.runtime.client.waitUntilReadable(workspacePath);
+            return false;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/checkpoint is in progress|database is locked|lbug\.shadow|temporarily unavailable/i.test(message)) throw error;
+            await this.runtime.restart(workspacePath);
+            await this.runtime.client.waitUntilReadable(workspacePath);
+            return false;
+        }
+    }
+
+    private async openOriginalUi(webview: vscode.Webview): Promise<void> {
+        const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const autoAnalyzed = await this.ensureWorkspaceReady(webview);
 
         const server = await vscode.env.asExternalUri(vscode.Uri.parse(`http://127.0.0.1:${this.runtime.port}`));
         const serverUrl = server.toString(true).replace(/\/$/, '');
         const url = new URL(`${serverUrl}/`);
         url.searchParams.set('server', serverUrl);
         if (workspacePath) url.searchParams.set('repo', workspacePath);
-        await webview.postMessage({ type: 'serverReady', url: url.toString(), status: await this.runtime.status(), autoAnalyzed });
+        await webview.postMessage({
+            type: 'serverReady',
+            url: url.toString(),
+            status: await this.runtime.status(),
+            autoAnalyzed,
+            canUpdateVendor: this.canUpdateVendor(),
+            integration: await this.runtime.integrationInfo(),
+        });
     }
 
     private async analyze(webview: vscode.Webview, reopen = true): Promise<void> {
@@ -114,11 +152,11 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
 
     private async updateVendor(): Promise<void> {
-        const script = path.join(this.context.extensionPath, 'scripts', 'update-gitnexus.mjs');
-        const vendorGit = path.join(this.context.extensionPath, 'vendor', 'GitNexus', '.git');
-        if (!fs.existsSync(script) || !fs.existsSync(vendorGit)) {
-            throw new Error('Upstream updates are available in an Ultraview source checkout. Packaged builds use the pinned local GitNexus runtime.');
+        if (!this.canUpdateVendor()) {
+            void vscode.window.showInformationMessage('GitNexus updates are included with Ultraview extension updates.');
+            return;
         }
+        const script = path.join(this.context.extensionPath, 'scripts', 'update-gitnexus.mjs');
         const terminal = vscode.window.createTerminal({ name: 'Update GitNexus', cwd: vscode.Uri.file(this.context.extensionPath) });
         terminal.show();
         terminal.sendText('npm run pull:gitnexus');
