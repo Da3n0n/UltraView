@@ -49,6 +49,7 @@ function App(): React.ReactElement {
     const [status, setStatus] = useState<RuntimeStatus>({ running: false, managed: false, installing: false, port: 4747, message: 'Preparing local GitNexus…' });
     const [frameUrl, setFrameUrl] = useState('');
     const [frameKey, setFrameKey] = useState(0);
+    const [transparent, setTransparent] = useState(false);
     const [busy, setBusy] = useState(true);
     const [message, setMessage] = useState('Starting the bundled runtime…');
     const [error, setError] = useState('');
@@ -74,7 +75,9 @@ function App(): React.ReactElement {
             }
             if (payload.type === 'serverReady') {
                 setStatus(payload.status);
-                setFrameUrl(embeddedThemeUrl(String(payload.url), Boolean(payload.transparent)));
+                const transparentMode = Boolean(payload.transparent);
+                setTransparent(transparentMode);
+                setFrameUrl(embeddedThemeUrl(String(payload.url), transparentMode));
                 setFrameKey(key => key + 1);
                 setBusy(true);
                 setMessage(payload.autoAnalyzed ? 'Opening the newly indexed project…' : 'Opening the local project…');
@@ -151,7 +154,15 @@ function App(): React.ReactElement {
                 : <button className="primary" onClick={start}>Start</button>}
         </header>
         <main>
-            {frameUrl && <iframe key={frameKey} src={frameUrl} title="GitNexus" allow="clipboard-read; clipboard-write" onLoad={() => { setBusy(false); setMessage(''); }} />}
+            {frameUrl && <iframe key={frameKey} src={frameUrl} title="GitNexus" allow="clipboard-read; clipboard-write" onLoad={(event) => {
+                event.currentTarget.contentWindow?.postMessage({
+                    type: 'ultraview:theme',
+                    embedded: true,
+                    transparent,
+                }, '*');
+                setBusy(false);
+                setMessage('');
+            }} />}
             {!frameUrl && !busy && !error && <div className="empty">
                 <div className="orb">⌘</div>
                 <h2>GitNexus is ready when you are</h2>

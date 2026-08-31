@@ -1,10 +1,19 @@
 (() => {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('ultraview') !== '1') return;
-
   const root = document.documentElement;
-  root.dataset.ultraviewEmbedded = 'true';
+  if (params.get('ultraview') === '1') root.dataset.ultraviewEmbedded = 'true';
   if (params.get('uv-transparent') === '1') root.dataset.ultraviewTransparent = 'true';
+
+  window.addEventListener('message', (event) => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || message.type !== 'ultraview:theme' || message.embedded !== true) return;
+    root.dataset.ultraviewEmbedded = 'true';
+    if (message.transparent === true) root.dataset.ultraviewTransparent = 'true';
+    else delete root.dataset.ultraviewTransparent;
+  });
+
+  if (params.get('ultraview') !== '1') return;
   const variables = {
     'uv-editor-bg': '--ultraview-editor-background',
     'uv-editor-fg': '--ultraview-editor-foreground',

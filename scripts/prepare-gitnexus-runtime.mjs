@@ -2,7 +2,11 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { applyGitNexusCustomizations, gitNexusCustomizationFingerprint } from './gitnexus-customizations.mjs';
+import {
+    applyGitNexusCustomizations,
+    applyGitNexusRuntimeCustomizations,
+    gitNexusCustomizationFingerprint,
+} from './gitnexus-customizations.mjs';
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const resourcesRoot = join(projectRoot, 'resources');
@@ -39,7 +43,8 @@ cpSync(sourceModules, join(stagingRoot, 'node_modules'), { recursive: true, forc
 cpSync(join(sourceRoot, 'dist'), join(packageRoot, 'dist'), { recursive: true, force: true });
 cpSync(join(sourceRoot, 'vendor'), join(packageRoot, 'vendor'), { recursive: true, force: true });
 cpSync(sourceWeb, join(packageRoot, 'web'), { recursive: true, force: true });
-applyGitNexusCustomizations(join(packageRoot, 'web'));
+applyGitNexusRuntimeCustomizations(packageRoot);
+applyGitNexusCustomizations(join(packageRoot, 'web'), customizationFingerprint);
 cpSync(join(sourceRoot, 'package.json'), join(packageRoot, 'package.json'), { force: true });
 const bundledNode = join(stagingRoot, 'node', process.platform === 'win32' ? 'node.exe' : 'node');
 mkdirSync(dirname(bundledNode), { recursive: true });

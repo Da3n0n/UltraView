@@ -19,8 +19,8 @@
 :root[data-ultraview-transparent='true'] {
   --color-void: transparent;
   --color-deep: transparent;
-  --color-surface: rgba(0, 0, 0, 0.12);
-  --color-elevated: rgba(0, 0, 0, 0.2);
+  --color-surface: transparent;
+  --color-elevated: transparent;
   --color-hover: rgba(255, 255, 255, 0.12);
   --color-border-subtle: rgba(255, 255, 255, 0.08);
   --color-border-default: rgba(255, 255, 255, 0.14);
@@ -41,6 +41,22 @@
 }
 
 :root[data-ultraview-transparent='true'] canvas {
+  background: transparent !important;
+}
+
+/* Treat GitNexus's explorer, code inspector and right-side detail views as a
+ * single IDE surface. Their structure and borders remain, but their backdrop,
+ * shadow and hard-coded syntax-highlighter canvas no longer darken the editor. */
+:root[data-ultraview-transparent='true'] aside[class*='bg-surface'],
+:root[data-ultraview-transparent='true'] aside[class*='bg-deep'] {
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+:root[data-ultraview-transparent='true']
+  aside[class*='bg-surface']
+  pre[style*='background'] {
   background: transparent !important;
 }
 
