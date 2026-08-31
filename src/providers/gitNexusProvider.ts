@@ -77,6 +77,12 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
             && fs.existsSync(path.join(this.context.extensionPath, 'vendor', 'GitNexus', '.git'));
     }
 
+    private transparentModeEnabled(): boolean {
+        const theme = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme', '');
+        return this.context.globalState.get<boolean>('ultraview.transparent.enabled') === true
+            || theme.startsWith('Ultraview Transparent');
+    }
+
     private async ensureWorkspaceReady(webview: vscode.Webview): Promise<boolean> {
         if (this.workspaceReadyInFlight) return this.workspaceReadyInFlight;
         const pending = this.prepareWorkspace(webview);
@@ -130,6 +136,7 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
             status: await this.runtime.status(),
             autoAnalyzed,
             canUpdateVendor: this.canUpdateVendor(),
+            transparent: this.transparentModeEnabled(),
             integration: await this.runtime.integrationInfo(),
         });
     }

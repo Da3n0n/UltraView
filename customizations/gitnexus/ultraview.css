@@ -1,0 +1,78 @@
+/* Ultraview-owned GitNexus theme layer.
+ * This file is applied after the upstream build and is never stored in the
+ * GitNexus submodule, so `npm run pull:gitnexus` cannot overwrite it.
+ */
+:root[data-ultraview-embedded='true'] {
+  --color-void: var(--ultraview-editor-background, #1e1e1e);
+  --color-deep: var(--ultraview-editor-background, #1e1e1e);
+  --color-surface: var(--ultraview-side-bar-background, #181818);
+  --color-elevated: var(--ultraview-input-background, #242424);
+  --color-hover: var(--ultraview-list-hover-background, #2a2d2e);
+  --color-border-subtle: var(--ultraview-panel-border, #2b2b2b);
+  --color-border-default: var(--ultraview-input-border, #3c3c3c);
+  --color-text-primary: var(--ultraview-editor-foreground, #cccccc);
+  --color-text-secondary: var(--ultraview-description-foreground, #a0a0a0);
+  --color-text-muted: var(--ultraview-description-foreground, #808080);
+  --font-sans: var(--ultraview-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+}
+
+:root[data-ultraview-transparent='true'] {
+  --color-void: transparent;
+  --color-deep: transparent;
+  --color-surface: rgba(0, 0, 0, 0.12);
+  --color-elevated: rgba(0, 0, 0, 0.2);
+  --color-hover: rgba(255, 255, 255, 0.12);
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-default: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-ultraview-embedded='true'],
+:root[data-ultraview-embedded='true'] body,
+:root[data-ultraview-embedded='true'] #root {
+  background: var(--ultraview-editor-background, #1e1e1e) !important;
+}
+
+:root[data-ultraview-transparent='true'],
+:root[data-ultraview-transparent='true'] body,
+:root[data-ultraview-transparent='true'] #root,
+:root[data-ultraview-transparent='true'] .bg-void,
+:root[data-ultraview-transparent='true'] .bg-deep {
+  background: transparent !important;
+}
+
+:root[data-ultraview-transparent='true'] canvas {
+  background: transparent !important;
+}
+
+/* GraphCanvas inserts a pointer-events-none gradient layer immediately inside
+ * its bg-void root. Target its structure instead of serialized inline-style
+ * text, which browsers normalize differently and made the old rule brittle. */
+:root[data-ultraview-transparent='true']
+  [class~='bg-void'][class~='h-full'][class~='w-full']
+  > [class~='pointer-events-none'][class~='absolute'][class~='inset-0'],
+:root[data-ultraview-transparent='true']
+  [class~='bg-void'][class~='h-full'][class~='w-full']
+  > [class~='pointer-events-none'][class~='absolute'][class~='inset-0']
+  > [class~='absolute'][class~='inset-0'] {
+  background: transparent !important;
+}
+
+/* The extension already provides its own controls and update workflow. */
+:root[data-ultraview-embedded='true'] header a[href='https://github.com/abhigyanpatwari/GitNexus'] {
+  display: none !important;
+}
+
+/* The status bar already presents these graph totals. Remove the duplicate
+ * node/edge pair from Header without affecting StatusBar's graph-stats block. */
+:root[data-ultraview-embedded='true']
+  header
+  [class~='mr-2'][class~='gap-4'][class~='text-xs'][class~='text-text-muted'] {
+  display: none !important;
+}
+
+/* Keep the embedded workspace UI focused and uncluttered. */
+:root[data-ultraview-embedded='true']
+  footer
+  a[href='https://github.com/sponsors/abhigyanpatwari'] {
+  display: none !important;
+}

@@ -6,6 +6,8 @@ vendor/**
 resources/gitnexus-runtime/**
 resources/.gitnexus-runtime-staging/**
 .gitmodules
+customizations/**
+scripts/gitnexus-customizations.mjs
 src/**
 .gitignore
 .vscodeignore

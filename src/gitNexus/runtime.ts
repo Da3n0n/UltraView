@@ -9,6 +9,7 @@ import type { GitNexusRuntimeStatus } from './types';
 const execFileAsync = promisify(execFile);
 const RUNTIME_LAYOUT_VERSION = 2;
 const SERVER_PID_KEY = 'ultraview.gitNexus.serverPid';
+const SERVER_RUNTIME_KEY = 'ultraview.gitNexus.serverRuntime';
 function shellQuote(value: string): string {
     return `"${value.replace(/"/g, '\\"')}"`;
 }
@@ -93,8 +94,8 @@ export class GitNexusRuntime implements vscode.Disposable {
 
     private cliCandidates(): string[] {
         return [
-            path.join(this.context.extensionPath, 'vendor', 'GitNexus', 'gitnexus', 'dist', 'cli', 'index.js'),
             path.join(this.extractedRuntimeRoot(), 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
+            path.join(this.context.extensionPath, 'vendor', 'GitNexus', 'gitnexus', 'dist', 'cli', 'index.js'),
             path.join(this.context.globalStorageUri.fsPath, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
         ];
     }
@@ -103,19 +104,24 @@ export class GitNexusRuntime implements vscode.Disposable {
         return this.cliCandidates().find(candidate => fs.existsSync(candidate));
     }
 
-    private runtimePin(): { version: string; commit: string } {
+    private runtimePin(): { version: string; commit: string; customizationFingerprint: string } {
         const manifest = path.join(this.context.extensionPath, 'resources', 'gitnexus-version.json');
         try {
             const pin = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-            return { version: String(pin.version), commit: String(pin.commit) };
+            const archiveMarker = JSON.parse(fs.readFileSync(path.join(this.context.extensionPath, 'resources', 'gitnexus-runtime-archive.json'), 'utf8'));
+            return {
+                version: String(pin.version),
+                commit: String(pin.commit),
+                customizationFingerprint: String(archiveMarker.customizationFingerprint ?? 'base'),
+            };
         } catch {
-            return { version: '1.6.10', commit: 'unknown' };
+            return { version: '1.6.10', commit: 'unknown', customizationFingerprint: 'base' };
         }
     }
 
     private extractedRuntimeRoot(): string {
         const pin = this.runtimePin();
-        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}-r${RUNTIME_LAYOUT_VERSION}`);
+        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}-r${RUNTIME_LAYOUT_VERSION}-u${pin.customizationFingerprint.slice(0, 12)}`);
     }
 
     private runtimeArchive(): string {
@@ -174,9 +180,13 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     private async startOnce(): Promise<void> {
-        if ((await this.status()).running) return;
         const cli = this.findCli() ?? await this.install();
         const node = await this.assertNode();
+        if ((await this.status()).running) {
+            const activeRuntime = this.context.globalState.get<string>(SERVER_RUNTIME_KEY);
+            if (activeRuntime === this.extractedRuntimeRoot()) return;
+            await this.terminateRunningServer();
+        }
         this.output.appendLine(`Starting GitNexus at http://127.0.0.1:${this.port}`);
         const child = spawn(node, [cli, 'serve', '--host', '127.0.0.1', '--port', String(this.port)], {
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath,
@@ -185,6 +195,7 @@ export class GitNexusRuntime implements vscode.Disposable {
         });
         this.process = child;
         if (child.pid) await this.context.globalState.update(SERVER_PID_KEY, child.pid);
+        await this.context.globalState.update(SERVER_RUNTIME_KEY, this.extractedRuntimeRoot());
         child.stdout?.on('data', data => this.output.append(data.toString()));
         child.stderr?.on('data', data => this.output.append(data.toString()));
         child.once('exit', code => {
@@ -192,6 +203,7 @@ export class GitNexusRuntime implements vscode.Disposable {
             if (this.process === child) this.process = undefined;
             if (this.context.globalState.get<number>(SERVER_PID_KEY) === child.pid) {
                 void this.context.globalState.update(SERVER_PID_KEY, undefined);
+                void this.context.globalState.update(SERVER_RUNTIME_KEY, undefined);
             }
             void this.status().then(status => this.changed.fire(status));
         });
@@ -202,6 +214,7 @@ export class GitNexusRuntime implements vscode.Disposable {
             try {
                 await this.client.health();
                 this.changed.fire(await this.status());
+                void this.cleanupOldExtractedRuntimes();
                 return;
             } catch {
                 await new Promise(resolve => setTimeout(resolve, 350));
@@ -215,10 +228,17 @@ export class GitNexusRuntime implements vscode.Disposable {
         this.process?.kill();
         this.process = undefined;
         void this.context.globalState.update(SERVER_PID_KEY, undefined);
+        void this.context.globalState.update(SERVER_RUNTIME_KEY, undefined);
         void this.status().then(status => this.changed.fire(status));
     }
 
     async restart(checkpointWorkspace?: string): Promise<void> {
+        await this.terminateRunningServer();
+        if (checkpointWorkspace) await this.parkTinyCheckpointSidecars(checkpointWorkspace);
+        await this.start();
+    }
+
+    private async terminateRunningServer(): Promise<void> {
         // A server left behind by a previous extension host can keep LadybugDB's
         // checkpoint open. Verify that this port is GitNexus before recycling it.
         await this.client.info();
@@ -234,6 +254,7 @@ export class GitNexusRuntime implements vscode.Disposable {
         }
         this.process = undefined;
         await this.context.globalState.update(SERVER_PID_KEY, undefined);
+        await this.context.globalState.update(SERVER_RUNTIME_KEY, undefined);
 
         for (let attempt = 0; attempt < 20; attempt++) {
             if (!(await this.status()).running) break;
@@ -243,8 +264,26 @@ export class GitNexusRuntime implements vscode.Disposable {
             process.kill(pid, 'SIGKILL');
             await new Promise(resolve => setTimeout(resolve, 250));
         }
-        if (checkpointWorkspace) await this.parkTinyCheckpointSidecars(checkpointWorkspace);
-        await this.start();
+    }
+
+    private async cleanupOldExtractedRuntimes(): Promise<void> {
+        const current = path.resolve(this.extractedRuntimeRoot()).toLowerCase();
+        try {
+            const entries = await fs.promises.readdir(this.context.globalStorageUri.fsPath, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory() || !entry.name.startsWith('runtime-')) continue;
+                const candidate = path.resolve(this.context.globalStorageUri.fsPath, entry.name);
+                if (candidate.toLowerCase() === current) continue;
+                try {
+                    await fs.promises.rm(candidate, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+                    this.output.appendLine(`Removed superseded GitNexus runtime ${entry.name}.`);
+                } catch (error) {
+                    this.output.appendLine(`Could not remove superseded runtime ${entry.name}: ${error instanceof Error ? error.message : String(error)}`);
+                }
+            }
+        } catch (error) {
+            this.output.appendLine(`Could not inspect old GitNexus runtimes: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 
     private async parkTinyCheckpointSidecars(workspacePath: string): Promise<void> {

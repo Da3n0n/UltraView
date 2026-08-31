@@ -22,6 +22,29 @@ const vscode = (window as unknown as {
     __vscodeApi: { postMessage(message: Record<string, unknown>): void };
 }).__vscodeApi;
 
+function embeddedThemeUrl(rawUrl: string, transparent: boolean): string {
+    const url = new URL(rawUrl);
+    const styles = getComputedStyle(document.documentElement);
+    const variables: Record<string, string> = {
+        'uv-editor-bg': '--vscode-editor-background',
+        'uv-editor-fg': '--vscode-editor-foreground',
+        'uv-sidebar-bg': '--vscode-sideBar-background',
+        'uv-input-bg': '--vscode-input-background',
+        'uv-list-hover-bg': '--vscode-list-hoverBackground',
+        'uv-panel-border': '--vscode-panel-border',
+        'uv-input-border': '--vscode-input-border',
+        'uv-description-fg': '--vscode-descriptionForeground',
+        'uv-font-family': '--vscode-font-family',
+    };
+    url.searchParams.set('ultraview', '1');
+    if (transparent) url.searchParams.set('uv-transparent', '1');
+    for (const [parameter, variable] of Object.entries(variables)) {
+        const value = styles.getPropertyValue(variable).trim();
+        if (value) url.searchParams.set(parameter, value);
+    }
+    return url.toString();
+}
+
 function App(): React.ReactElement {
     const [status, setStatus] = useState<RuntimeStatus>({ running: false, managed: false, installing: false, port: 4747, message: 'Preparing local GitNexus…' });
     const [frameUrl, setFrameUrl] = useState('');
@@ -51,7 +74,7 @@ function App(): React.ReactElement {
             }
             if (payload.type === 'serverReady') {
                 setStatus(payload.status);
-                setFrameUrl(String(payload.url));
+                setFrameUrl(embeddedThemeUrl(String(payload.url), Boolean(payload.transparent)));
                 setFrameKey(key => key + 1);
                 setBusy(true);
                 setMessage(payload.autoAnalyzed ? 'Opening the newly indexed project…' : 'Opening the local project…');
