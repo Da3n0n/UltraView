@@ -1679,31 +1679,6 @@ async function isGitRepo(dirPath: string): Promise<boolean> {
 }
 
 /**
- * Scans one level of subdirectories under projectPath looking for independent
- * git repos (directories with a .git entry that are NOT already in excludePaths).
- * Skips hidden dirs and node_modules.
- */
-function findNestedRepoPaths(projectPath: string, excludePaths: Set<string> = new Set()): string[] {
-    const results: string[] = [];
-    try {
-        const entries = fs.readdirSync(projectPath, { withFileTypes: true });
-        for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-            const childPath = path.join(projectPath, entry.name);
-            if (excludePaths.has(childPath)) continue;
-            const gitEntry = path.join(childPath, '.git');
-            if (fs.existsSync(gitEntry)) {
-                results.push(childPath);
-            }
-        }
-    } catch {
-        /* ignore permission errors */
-    }
-    return results;
-}
-
-/**
  * Sync a single git repo. Never throws on recoverable conditions.
  *
  * @param projectPath  Absolute path to the repo root.
@@ -1966,9 +1941,9 @@ async function checkoutFinalSubmodulePointers(
 }
 
 /**
- * One-button transaction for a root repository and every nested repository:
- * changed submodules are saved deepest-first, the root records their resulting
- * pointers, and the final parent merge is then applied back to all checkouts.
+ * One-button transaction for a root repository and its declared submodules.
+ * Independent repositories nested inside the project are intentionally ignored:
+ * they may be vendored third-party checkouts with unrelated, read-only remotes.
  */
 async function gitSyncAll(
     projectPath: string,
@@ -1977,23 +1952,12 @@ async function gitSyncAll(
     auth?: GitAuthContext
 ): Promise<string> {
     const submodules = await syncChangedSubmodules(projectPath, commitMsg, auth);
-    const submoduleSet = new Set(submodules.paths.map((item) => path.resolve(item)));
-    const nestedNotes: string[] = [];
-
-    // Preserve the Project Manager's existing support for independent nested
-    // repositories, but run them before the root so any tracked gitlink moves
-    // are included in the same parent commit and never require a second click.
-    for (const nestedPath of findNestedRepoPaths(projectPath, submoduleSet)) {
-        const result = await gitSync(nestedPath, commitMsg, undefined, auth);
-        nestedNotes.push(`${path.relative(projectPath, nestedPath)}: ${result}`);
-    }
-
     const result = await gitSync(projectPath, commitMsg, remoteUrl, auth);
     const finalSubmoduleCount = await checkoutFinalSubmodulePointers(projectPath, auth);
-    const detailCount = submodules.notes.length + nestedNotes.length;
+    const detailCount = submodules.notes.length;
     if (!detailCount && !finalSubmoduleCount) return result;
 
-    const details = [...submodules.notes, ...nestedNotes];
+    const details = submodules.notes;
     if (details.length) return `${result} | ${details.join(' | ')}`;
     return `${result} | ${finalSubmoduleCount} submodule${finalSubmoduleCount === 1 ? '' : 's'} verified`;
 }
