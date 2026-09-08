@@ -172,6 +172,72 @@ body::after {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    /* Reserve room for the fixed top-right theme toggle so it never overlaps nav content. */
+    padding-right: 72px;
+}
+
+.theme-toggle-fixed {
+    position: absolute;
+    /* Pinned to the navbar's top-right and vertically centered, so padding stays
+       equal whether the navbar is tall (top) or compact (.scrolled / sticky). */
+    top: 50%;
+    right: 20px;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+        rgba(3, 4, 5, 0.5);
+    backdrop-filter: blur(20px) saturate(1.25);
+    -webkit-backdrop-filter: blur(20px) saturate(1.25);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.theme-toggle-fixed:hover {
+    transform: translateY(calc(-50% - 1px)) scale(1.04);
+    border-color: var(--border-hover);
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.theme-toggle-fixed:active {
+    transform: translateY(-50%) scale(0.96);
+}
+
+.theme-toggle-fixed:focus-visible {
+    outline: 2px solid var(--accent-secondary);
+    outline-offset: 2px;
+}
+
+.theme-toggle-fixed .theme-icon {
+    width: 20px;
+    height: 20px;
+    animation: themeIconIn 0.25s ease;
+}
+
+[data-theme='light'] .theme-toggle-fixed {
+    background: rgba(255, 255, 255, 0.7);
+}
+
+[data-theme='light'] .theme-toggle-fixed:hover {
+    background: rgba(7, 9, 10, 0.07);
+}
+
+@keyframes themeIconIn {
+    from {
+        opacity: 0;
+        transform: rotate(-45deg) scale(0.7);
+    }
+    to {
+        opacity: 1;
+        transform: rotate(0) scale(1);
+    }
 }
 
 .logo {
@@ -241,45 +307,6 @@ body::after {
 
 .nav-links a:hover {
     color: var(--text-primary);
-}
-
-.theme-toggle {
-    width: 38px;
-    height: 38px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    background:
-        linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
-        rgba(255, 255, 255, 0.03);
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: transform var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
-}
-
-.theme-toggle:hover {
-    transform: translateY(-1px);
-    border-color: var(--border-hover);
-    background: rgba(255, 255, 255, 0.09);
-}
-
-.theme-toggle span {
-    display: inline-flex;
-    width: 22px;
-    height: 22px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: var(--text-primary);
-    color: var(--bg-primary);
-    font-size: 11px;
-    font-weight: 900;
-}
-
-[data-theme='light'] .theme-toggle {
-    background: rgba(7, 9, 10, 0.035);
 }
 
 .mobile-menu-btn {
@@ -2082,8 +2109,19 @@ body::after {
         display: flex;
     }
 
-    .theme-toggle {
-        width: 100%;
+    .nav-container {
+        padding-right: 64px;
+    }
+
+    .theme-toggle-fixed {
+        right: 16px;
+        width: 38px;
+        height: 38px;
+    }
+
+    .theme-toggle-fixed .theme-icon {
+        width: 18px;
+        height: 18px;
     }
 
     .mobile-menu-btn {
