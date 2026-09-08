@@ -164,13 +164,13 @@ export async function uploadObject(
     onProgress?: (msg: string) => void
 ): Promise<void> {
     const client = makeClient(config);
-    const stats = fs.statSync(localPath);
+    const stats = await fs.promises.stat(localPath);
     onProgress?.(`Uploading ${path.basename(localPath)} (${(stats.size / 1024 / 1024).toFixed(1)} MB)…`);
-    const body = fs.readFileSync(localPath);
-    await client.send(new PutObjectCommand({
+    const body = fs.createReadStream(localPath);
+    try { await client.send(new PutObjectCommand({
         Bucket: config.bucket,
         Key: key,
         Body: body,
         ContentLength: stats.size,
-    }));
+    })); } finally { body.destroy(); client.destroy(); }
 }

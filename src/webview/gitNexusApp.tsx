@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './gitNexusApp.css';
 
 interface RuntimeStatus {
+    needsDownload?: boolean;
     running: boolean;
     managed: boolean;
     installing: boolean;
@@ -61,11 +62,12 @@ function App(): React.ReactElement {
     useEffect(() => {
         const listener = (event: MessageEvent) => {
             const payload = event.data ?? {};
+            if (payload.type === 'idle') setBusy(false);
             if (payload.type === 'runtime') {
                 setStatus(payload.status);
                 if (payload.status?.installing) {
                     setBusy(true);
-                    setMessage('Preparing the bundled GitNexus runtime for first use…');
+                    setMessage(payload.status.message || 'Preparing the GitNexus runtime for first use…');
                 }
             }
             if (payload.type === 'analysisProgress') {
@@ -151,7 +153,7 @@ function App(): React.ReactElement {
             {canUpdateVendor && <button title="Pull pinned upstream source without overwriting Ultraview customizations" onClick={() => vscode.postMessage({ type: 'updateVendor' })}>Update</button>}
             {status.running
                 ? <button onClick={() => vscode.postMessage({ type: 'stop' })}>Stop</button>
-                : <button className="primary" onClick={start}>Start</button>}
+                : <button className="primary" onClick={start} disabled={busy}>{status.needsDownload ? 'Download runtime' : 'Start'}</button>}
         </header>
         <main>
             {frameUrl && <iframe key={frameKey} src={frameUrl} title="GitNexus" allow="clipboard-read; clipboard-write" onLoad={(event) => {
@@ -166,11 +168,12 @@ function App(): React.ReactElement {
             {!frameUrl && !busy && !error && <div className="empty">
                 <div className="orb">⌘</div>
                 <h2>GitNexus is ready when you are</h2>
-                <p>The runtime and complete original UI are bundled with Ultraview. Start it to analyze and open the current local project.</p>
-                <button className="primary large" onClick={start}>Start GitNexus</button>
+                <p>GitNexus is optional. Download its runtime once when you need it. Indexing runs only when you choose Analyze workspace.</p>
+                <button className="primary large" onClick={start}>{status.needsDownload ? 'Download runtime and start' : 'Start GitNexus'}</button>
             </div>}
             {(busy || error) && <div className="overlay">
                 {busy && <i className="spinner" />}
+                {busy && status.installing && <button onClick={() => vscode.postMessage({ type: 'cancelInstall' })}>Cancel download / installation</button>}
                 <strong>{error ? 'GitNexus could not open' : 'GitNexus'}</strong>
                 <p>{error || message}</p>
                 {error && <button className="primary" onClick={start}>Retry</button>}
@@ -180,14 +183,14 @@ function App(): React.ReactElement {
             <section className="guide" role="dialog" aria-modal="true" aria-label={guide === 'cli' ? 'GitNexus CLI guide' : 'GitNexus MCP setup'}>
                 <div className="guide-title"><div><strong>{guide === 'cli' ? 'GitNexus CLI' : 'Connect an AI model with MCP'}</strong><small>Scoped to {integration.workspacePath}</small></div><button onClick={() => setGuide(null)}>Close</button></div>
                 {guide === 'cli' ? <>
-                    <p>Run the bundled CLI from PowerShell. The leading <code>&amp;</code> is required when an executable path is quoted.</p>
+                    <p>Run the installed CLI from PowerShell. The leading <code>&amp;</code> is required when an executable path is quoted.</p>
                     <Snippet label="PowerShell" value={`${cliCommand} --help`} copied={copied} onCopy={copy} />
                     <h3>Useful commands</h3>
                     <Snippet label="Index status" value={`${cliCommand} status`} copied={copied} onCopy={copy} />
                     <Snippet label="Analyze this workspace" value={`${cliCommand} analyze ${psQuote(integration.workspacePath)} --index-only`} copied={copied} onCopy={copy} />
                     <Snippet label="Explore a symbol" value={`${cliCommand} context GitNexusProvider --repo ${psQuote(integration.workspacePath)}`} copied={copied} onCopy={copy} />
                 </> : <>
-                    <p><b>Recommended:</b> use stdio MCP. Your AI client starts the bundled GitNexus process only when needed, and the environment below limits it to this open workspace.</p>
+                    <p><b>Recommended:</b> use stdio MCP. Your AI client starts the local GitNexus process only when needed, and the environment below limits it to this open workspace.</p>
                     <h3>Codex · <code>~/.codex/config.toml</code></h3>
                     <Snippet label="Codex config" value={codexConfig} copied={copied} onCopy={copy} />
                     <h3>Claude Code, Cursor and JSON MCP clients</h3>

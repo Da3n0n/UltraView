@@ -3,11 +3,14 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ChildProcess, execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import { createHash } from 'crypto';
+import { Readable, Transform } from 'stream';
+import { pipeline } from 'stream/promises';
 import { GitNexusClient } from './client';
 import type { GitNexusRuntimeStatus } from './types';
 
 const execFileAsync = promisify(execFile);
-const RUNTIME_LAYOUT_VERSION = 2;
+const RUNTIME_LAYOUT_VERSION = 3;
 const SERVER_PID_KEY = 'ultraview.gitNexus.serverPid';
 const SERVER_RUNTIME_KEY = 'ultraview.gitNexus.serverRuntime';
 function shellQuote(value: string): string {
@@ -26,6 +29,8 @@ export class GitNexusRuntime implements vscode.Disposable {
     private process?: ChildProcess;
     private installing?: Promise<string>;
     private starting?: Promise<void>;
+    private installController?: AbortController;
+    private pinCache?: { version: string; commit: string; customizationFingerprint: string };
     private readonly output = vscode.window.createOutputChannel('Ultraview GitNexus');
     private readonly changed = new vscode.EventEmitter<GitNexusRuntimeStatus>();
     readonly onDidChangeStatus = this.changed.event;
@@ -59,10 +64,11 @@ export class GitNexusRuntime implements vscode.Disposable {
         } catch {
             return {
                 running: false,
+                needsDownload: !this.findCli(),
                 managed: false,
                 installing: Boolean(this.installing),
                 port: this.port,
-                message: this.installing ? 'Preparing bundled GitNexus runtime…' : 'Local server is stopped',
+                message: this.installing ? 'Preparing GitNexus runtime…' : 'Local server is stopped',
             };
         }
     }
@@ -84,7 +90,7 @@ export class GitNexusRuntime implements vscode.Disposable {
         try {
             ({ stdout } = await execFileAsync(node, ['--version'], { windowsHide: true }));
         } catch {
-            throw new Error('The bundled GitNexus Node runtime could not start. Reinstall Ultraview, or set ultraview.gitNexus.nodePath to Node.js 22.18+.');
+            throw new Error('The GitNexus Node runtime could not start. Set ultraview.gitNexus.nodePath to Node.js 22.18+.');
         }
         if (!validNodeVersion(stdout)) {
             throw new Error(`GitNexus needs Node.js 22.18+ (or 24.11+); found ${stdout.trim()}.`);
@@ -94,9 +100,8 @@ export class GitNexusRuntime implements vscode.Disposable {
 
     private cliCandidates(): string[] {
         return [
-            path.join(this.extractedRuntimeRoot(), 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
+            ...(this.runtimeMatches(this.extractedRuntimeRoot()) ? [path.join(this.extractedRuntimeRoot(), 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js')] : []),
             path.join(this.context.extensionPath, 'vendor', 'GitNexus', 'gitnexus', 'dist', 'cli', 'index.js'),
-            path.join(this.context.globalStorageUri.fsPath, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'),
         ];
     }
 
@@ -105,11 +110,12 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     private runtimePin(): { version: string; commit: string; customizationFingerprint: string } {
+        if (this.pinCache) return this.pinCache;
         const manifest = path.join(this.context.extensionPath, 'resources', 'gitnexus-version.json');
         try {
             const pin = JSON.parse(fs.readFileSync(manifest, 'utf8'));
-            const archiveMarker = JSON.parse(fs.readFileSync(path.join(this.context.extensionPath, 'resources', 'gitnexus-runtime-archive.json'), 'utf8'));
-            return {
+            const archiveMarker = JSON.parse(fs.readFileSync(path.join(this.context.extensionPath, 'resources', 'gitnexus-downloads.json'), 'utf8'));
+            return this.pinCache = {
                 version: String(pin.version),
                 commit: String(pin.commit),
                 customizationFingerprint: String(archiveMarker.customizationFingerprint ?? 'base'),
@@ -119,53 +125,160 @@ export class GitNexusRuntime implements vscode.Disposable {
         }
     }
 
-    private extractedRuntimeRoot(): string {
-        const pin = this.runtimePin();
-        return path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}-r${RUNTIME_LAYOUT_VERSION}-u${pin.customizationFingerprint.slice(0, 12)}`);
+    private runtimeMatches(root: string): boolean {
+        try {
+            const marker = JSON.parse(fs.readFileSync(path.join(root, 'runtime.json'), 'utf8'));
+            const pin = this.runtimePin();
+            return marker.version === pin.version && marker.commit === pin.commit
+                && marker.customizationFingerprint === pin.customizationFingerprint
+                && marker.platform === `${process.platform}-${process.arch}`
+                && fs.existsSync(path.join(root, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js'))
+                && fs.existsSync(path.join(root, 'node', process.platform === 'win32' ? 'node.exe' : 'node'));
+        } catch { return false; }
     }
 
-    private runtimeArchive(): string {
-        return path.join(
-            this.context.extensionPath,
-            'resources',
-            `gitnexus-runtime-${process.platform}-${process.arch}.tar.gz`
-        );
+    private extractedRuntimeRoot(): string {
+        const pin = this.runtimePin();
+        const root = (layout: number) => path.join(this.context.globalStorageUri.fsPath, `runtime-${pin.version}-${pin.commit.slice(0, 12)}-r${layout}-u${pin.customizationFingerprint.slice(0, 12)}`);
+        const current = root(RUNTIME_LAYOUT_VERSION);
+        if (this.runtimeMatches(current)) return current;
+        const previous = root(2);
+        return this.runtimeMatches(previous) ? previous : current;
     }
 
     async install(): Promise<string> {
         if (this.findCli()) return this.findCli()!;
         if (this.installing) return this.installing;
         this.installing = (async () => {
+            this.installController = new AbortController();
+            const signal = this.installController.signal;
             await fs.promises.mkdir(this.context.globalStorageUri.fsPath, { recursive: true });
             const pin = this.runtimePin();
-            const archive = this.runtimeArchive();
-            if (!fs.existsSync(archive)) {
-                throw new Error('The bundled GitNexus runtime is missing. Reinstall Ultraview.');
-            }
             const destination = this.extractedRuntimeRoot();
-            this.output.show(true);
-            this.output.appendLine(`Preparing bundled GitNexus ${pin.version} for first use…`);
             this.changed.fire(await this.status());
-            await fs.promises.rm(destination, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
-            await fs.promises.mkdir(destination, { recursive: true });
-            await new Promise<void>((resolve, reject) => {
-                const child = spawn('tar', ['-xzf', archive, '-C', destination], { windowsHide: true });
-                child.stdout?.on('data', data => this.output.append(data.toString()));
-                child.stderr?.on('data', data => this.output.append(data.toString()));
-                child.once('error', reject);
-                child.once('exit', code => code === 0 ? resolve() : reject(new Error(`Bundled runtime extraction exited with code ${code}`)));
-            });
-            const cli = this.findCli();
-            if (!cli) throw new Error('The bundled GitNexus runtime was extracted, but its CLI could not be found.');
-            this.output.appendLine('Bundled GitNexus runtime is ready.');
-            return cli;
+            const unlock = await this.lockInstallation(destination, signal);
+            let staging: string | undefined;
+            try {
+                const existing = this.findCli();
+                if (existing) return existing;
+                this.changed.fire(await this.status());
+                const archive = await this.obtainArchive(signal);
+                this.output.show(true);
+                this.output.appendLine(`Preparing GitNexus ${pin.version} for first use…`);
+                this.changed.fire(await this.status());
+                staging = await fs.promises.mkdtemp(destination + '.staging-');
+                await new Promise<void>((resolve, reject) => {
+                    const child = spawn('tar', ['-xzf', archive, '-C', staging!], { windowsHide: true, signal });
+                    let failure: Error | undefined;
+                    child.stdout?.on('data', data => this.output.append(data.toString()));
+                    child.stderr?.on('data', data => this.output.append(data.toString()));
+                    child.once('error', error => { failure = error; });
+                    child.once('close', code => failure ? reject(failure) : code === 0 ? resolve() : reject(new Error(`Runtime extraction exited with code ${code}`)));
+                });
+                const stagedCli = path.join(staging, 'node_modules', 'gitnexus', 'dist', 'cli', 'index.js');
+                await fs.promises.access(stagedCli);
+                await fs.promises.access(path.join(staging, 'node', process.platform === 'win32' ? 'node.exe' : 'node'));
+                if (!this.runtimeMatches(staging)) throw new Error('Runtime archive does not match the expected version or platform.');
+                signal.throwIfAborted();
+                // Only completed installs become visible to other windows.
+                await fs.promises.rm(destination, { recursive: true, force: true });
+                await fs.promises.rename(staging, destination);
+                staging = undefined;
+                const cli = this.findCli();
+                if (!cli) throw new Error('The GitNexus runtime was extracted, but its CLI could not be found.');
+                this.output.appendLine('GitNexus runtime is ready.');
+                return cli;
+            } finally {
+                if (staging) await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
+                await unlock();
+            }
         })();
         try {
             return await this.installing;
         } finally {
             this.installing = undefined;
+            this.installController = undefined;
             this.changed.fire(await this.status());
         }
+    }
+
+    cancelInstall(): void { this.installController?.abort(); }
+
+    private async lockInstallation(destination: string, signal: AbortSignal): Promise<() => Promise<void>> {
+        const lock = destination + '.lock';
+        const deadline = Date.now() + 10 * 60_000;
+        while (true) {
+            signal.throwIfAborted();
+            try {
+                const handle = await fs.promises.open(lock, 'wx');
+                await handle.writeFile(String(process.pid));
+                await handle.close();
+                return () => fs.promises.unlink(lock).catch(() => {});
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+                try {
+                    const owner = Number(await fs.promises.readFile(lock, 'utf8'));
+                    if (owner > 0) {
+                        try { process.kill(owner, 0); }
+                        catch (probe) {
+                            if ((probe as NodeJS.ErrnoException).code === 'ESRCH') {
+                                await fs.promises.unlink(lock);
+                                continue;
+                            }
+                        }
+                    } else if (Date.now() - (await fs.promises.stat(lock)).mtimeMs > 60_000) {
+                        await fs.promises.unlink(lock);
+                        continue;
+                    }
+                } catch { /* lock owner may be initializing/releasing it */ }
+                if (Date.now() >= deadline) throw new Error('Another window is installing GitNexus. Try again after it finishes.');
+                await new Promise(resolve => setTimeout(resolve, 250));
+            }
+        }
+    }
+
+    private async obtainArchive(signal: AbortSignal): Promise<string> {
+        const manifestPath = path.join(this.context.extensionPath, 'resources', 'gitnexus-downloads.json');
+        let entry: { url: string; sha256: string };
+        try {
+            const manifest = JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'));
+            const pin = this.runtimePin();
+            if (manifest.commit !== pin.commit || manifest.customizationFingerprint !== pin.customizationFingerprint) throw new Error('Runtime version mismatch.');
+            entry = manifest.platforms[`${process.platform}-${process.arch}`];
+            if (!entry || !/^[a-f0-9]{64}$/i.test(entry.sha256) || new URL(entry.url).protocol !== 'https:') throw new Error('Invalid runtime download.');
+        } catch {
+            throw new Error('No verified GitNexus runtime download is available for this platform in this version of Ultraview. Other Ultraview features remain available.');
+        }
+        const archive = path.join(this.context.globalStorageUri.fsPath, `download-${entry.sha256}.tar.gz`);
+        const digest = async (file: string) => {
+            const hash = createHash('sha256');
+            for await (const chunk of fs.createReadStream(file)) { signal.throwIfAborted(); hash.update(chunk); }
+            return hash.digest('hex');
+        };
+        if (fs.existsSync(archive) && await digest(archive) === entry.sha256.toLowerCase()) return archive;
+        const temporary = archive + `.${process.pid}.part`;
+        this.output.show(true);
+        this.output.appendLine('Downloading the GitNexus runtime…');
+        try {
+            const response = await fetch(entry.url, { signal });
+            if (!response.ok || !response.body) throw new Error(`Runtime download failed (${response.status}).`);
+            let bytes = 0;
+            let lastProgress = 0;
+            const progress = new Transform({ transform: (chunk, _encoding, callback) => {
+                bytes += chunk.length;
+                if (Date.now() - lastProgress > 500) {
+                    lastProgress = Date.now();
+                    this.changed.fire({ running: false, managed: false, installing: true, port: this.port,
+                        message: `Downloading runtime: ${(bytes / 1048576).toFixed(1)} MiB` });
+                }
+                callback(null, chunk);
+            } });
+            await pipeline(Readable.fromWeb(response.body as any), progress, fs.createWriteStream(temporary), { signal });
+            if (await digest(temporary) !== entry.sha256.toLowerCase()) throw new Error('Runtime download checksum mismatch. Retry the download.');
+            await fs.promises.rm(archive, { force: true });
+            await fs.promises.rename(temporary, archive);
+            return archive;
+        } finally { await fs.promises.rm(temporary, { force: true }).catch(() => {}); }
     }
 
     async start(): Promise<void> {
@@ -180,13 +293,13 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     private async startOnce(): Promise<void> {
-        const cli = this.findCli() ?? await this.install();
-        const node = await this.assertNode();
         if ((await this.status()).running) {
             const activeRuntime = this.context.globalState.get<string>(SERVER_RUNTIME_KEY);
-            if (activeRuntime === this.extractedRuntimeRoot()) return;
+            if (!activeRuntime || activeRuntime === this.extractedRuntimeRoot()) return;
             await this.terminateRunningServer();
         }
+        const cli = this.findCli() ?? await this.install();
+        const node = await this.assertNode();
         this.output.appendLine(`Starting GitNexus at http://127.0.0.1:${this.port}`);
         const child = spawn(node, [cli, 'serve', '--host', '127.0.0.1', '--port', String(this.port)], {
             cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath,
@@ -271,9 +384,10 @@ export class GitNexusRuntime implements vscode.Disposable {
         try {
             const entries = await fs.promises.readdir(this.context.globalStorageUri.fsPath, { withFileTypes: true });
             for (const entry of entries) {
-                if (!entry.isDirectory() || !entry.name.startsWith('runtime-')) continue;
+                if (!entry.isDirectory() || !entry.name.startsWith('runtime-') || entry.name.includes('.staging-')) continue;
                 const candidate = path.resolve(this.context.globalStorageUri.fsPath, entry.name);
                 if (candidate.toLowerCase() === current) continue;
+                if (fs.existsSync(candidate + '.lock')) continue;
                 try {
                     await fs.promises.rm(candidate, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
                     this.output.appendLine(`Removed superseded GitNexus runtime ${entry.name}.`);
@@ -340,8 +454,9 @@ export class GitNexusRuntime implements vscode.Disposable {
         cliPath: string;
         workspacePath: string;
         mcpPort: number;
-    }> {
-        const cliPath = this.findCli() ?? await this.install();
+    } | undefined> {
+        const cliPath = this.findCli();
+        if (!cliPath) return undefined;
         const nodePath = await this.assertNode();
         return {
             nodePath,
@@ -379,6 +494,7 @@ export class GitNexusRuntime implements vscode.Disposable {
     }
 
     dispose(): void {
+        this.cancelInstall();
         this.stop();
         this.changed.dispose();
         this.output.dispose();

@@ -7,16 +7,25 @@ const CopyPlugin = require('copy-webpack-plugin');
 
 /** @type {import('webpack').Configuration} */
 const config = {
+  name: 'extension',
   target: 'node',
-  mode: 'none',
-  entry: './src/extension.ts',
+  mode: 'production',
+  entry: {
+    extension: './src/extension.ts',
+    'commandScanner.worker': './src/commands/commandScanner.worker.ts',
+    'sqlite.worker': './src/database/sqlite.worker.ts',
+    'sqlDump.worker': './src/database/sqlDump.worker.ts'
+  },
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'extension.js',
-    libraryTarget: 'commonjs2'
+    filename: '[name].js',
+    chunkFilename: 'host-[id].js',
+    libraryTarget: 'commonjs2',
+    clean: true
   },
   externals: {
     vscode: 'commonjs vscode',
+    'sql.js': 'commonjs ./sql-wasm.js',
     duckdb: 'commonjs duckdb'
   },
   resolve: {
@@ -28,7 +37,10 @@ const config = {
       {
         test: /\.tsx?$/,
         exclude: /node_modules/,
-        use: 'ts-loader'
+        use: {
+          loader: 'ts-loader',
+          options: { compilerOptions: { module: 'esnext' } }
+        }
       }
     ]
   },
@@ -38,6 +50,10 @@ const config = {
     }),
     new CopyPlugin({
       patterns: [
+        {
+          from: 'node_modules/sql.js/dist/sql-wasm.js',
+          to: 'sql-wasm.js'
+        },
         {
           from: 'node_modules/sql.js/dist/sql-wasm.wasm',
           to: 'sql-wasm.wasm'
@@ -51,6 +67,8 @@ const config = {
 
 /** @type {import('webpack').Configuration} */
 const webviewConfig = {
+  name: 'webviews',
+  dependencies: ['extension'],
   target: 'web',
   mode: 'production',
   entry: {

@@ -10,6 +10,7 @@ import type {
 type TabKey = 'data' | 'structure' | 'query';
 
 interface QueryState {
+  rowLimit?: number;
   columns: string[];
   rows: Record<string, unknown>[];
   changes?: number;
@@ -248,6 +249,7 @@ function App() {
           columns: message.columns ?? [],
           rows: message.rows ?? [],
           changes: message.changes,
+          rowLimit: message.rowLimit,
         });
         return;
       }
@@ -1639,7 +1641,9 @@ function App() {
                   ? queryState.error
                   : queryState.changes !== undefined
                     ? `Query completed. ${queryState.changes} change(s).`
-                    : `Returned ${queryState.rows.length} row(s).`}
+                    : queryState.rowLimit && queryState.rows.length >= queryState.rowLimit
+                      ? `Showing the first ${queryState.rows.length} rows (result limit).`
+                      : `Returned ${queryState.rows.length} row(s).`}
               </div>
             )}
             <div className="db-content">

@@ -26,22 +26,30 @@ import { openUrlInVsCodeBrowser } from './utils/browser';
 import { applyLocalAccount } from './git/gitCredentials';
 import { DrawingProvider } from './drawings/drawingProvider';
 import { DrawingManager } from './drawings/drawingManager';
-import { configureS3BackupCredentials } from './providers/s3BackupProvider';
-import { BucketManagerProvider } from './providers/bucketManagerProvider';
 import { GitNexusProvider } from './providers/gitNexusProvider';
 import { GitNexusRuntime } from './gitNexus/runtime';
 
-let customComments: CustomComments;
+let customComments: CustomComments | undefined;
 let sharedStore: SharedStore;
+let storeReady: Promise<void> | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-    customComments = new CustomComments(context);
+    const getCustomComments = () => customComments ??= new CustomComments(context);
+    const configureS3BackupCredentials = async (ctx: vscode.ExtensionContext) =>
+        (await import('./providers/s3BackupProvider')).configureS3BackupCredentials(ctx);
+    let bucketProvider: Promise<import('./providers/bucketManagerProvider').BucketManagerProvider> | undefined;
+    const getBucketProvider = () => bucketProvider ??= import('./providers/bucketManagerProvider')
+        .then(({ BucketManagerProvider }) => new BucketManagerProvider(context));
     registerThemeCommands(context);
 
     // ── Shared cross-IDE store ─────────────────────────────────────────────
     sharedStore = new SharedStore(context);
-    await sharedStore.initialize();
-    context.subscriptions.push({ dispose: () => sharedStore.dispose() });
+    storeReady = sharedStore.initialize();
+    void storeReady.catch(error => console.error('[Ultraview] Shared store initialization failed:', error));
+    context.subscriptions.push({ dispose: async () => {
+        await storeReady?.catch(() => {});
+        await sharedStore.dispose();
+    } });
 
     const gitProvider = new GitProvider(context, sharedStore);
     const drawingManager = new DrawingManager(context, sharedStore);
@@ -116,25 +124,33 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(
             GitNexusProvider.viewId,
             gitNexusProvider,
-            { webviewOptions: { retainContextWhenHidden: true } }
+            { webviewOptions: { retainContextWhenHidden: false } }
         ),
-        vscode.window.registerWebviewViewProvider(GitProvider.viewId, gitProvider, {
+        vscode.window.registerWebviewViewProvider(GitProvider.viewId, {
+            resolveWebviewView: async (view, _resolveContext, token) => {
+                await storeReady;
+                if (!token.isCancellationRequested) gitProvider.resolveWebviewView(view);
+            },
+        }, {
             webviewOptions: { retainContextWhenHidden: true },
         }),
         vscode.window.registerWebviewViewProvider(
             PortsProvider.viewId,
             new PortsProvider(context),
-            { webviewOptions: { retainContextWhenHidden: true } }
+            { webviewOptions: { retainContextWhenHidden: false } }
         ),
         vscode.window.registerWebviewViewProvider(
             DrawingProvider.viewId,
-            drawingProvider,
+            { resolveWebviewView: async (view, resolveContext, token) => {
+                await storeReady;
+                if (!token.isCancellationRequested) drawingProvider.resolveWebviewView(view, resolveContext, token);
+            } },
             { webviewOptions: { retainContextWhenHidden: true } }
         ),
         vscode.window.registerWebviewViewProvider(
-            BucketManagerProvider.viewId,
-            new BucketManagerProvider(context),
-            { webviewOptions: { retainContextWhenHidden: true } }
+            'ultraview.bucketManager',
+            { resolveWebviewView: async (view) => (await getBucketProvider()).resolveWebviewView(view) },
+            { webviewOptions: { retainContextWhenHidden: false } }
         ),
         vscode.commands.registerCommand('ultraview.openCodeGraph', () => {
             CodeGraphProvider.openAsPanel(context);
@@ -158,10 +174,12 @@ export async function activate(context: vscode.ExtensionContext) {
                 () => gitNexusProvider.analyzeWorkspace()
             );
         }),
-        vscode.commands.registerCommand('ultraview.openGitProjects', () => {
+        vscode.commands.registerCommand('ultraview.openGitProjects', async () => {
+            await storeReady;
             GitProvider.openAsPanel(context, sharedStore);
         }),
         vscode.commands.registerCommand('ultraview.quickOpenProject', async () => {
+            await storeReady;
             const manager = new GitProjects(context, sharedStore);
             const accounts = new GitAccounts(context, sharedStore);
             const projects = manager
@@ -249,6 +267,7 @@ export async function activate(context: vscode.ExtensionContext) {
             );
         }),
         vscode.commands.registerCommand('ultraview.quickSwitchGitAccount', async () => {
+            await storeReady;
             const manager = new GitProjects(context, sharedStore);
             const accounts = new GitAccounts(context, sharedStore);
             const accountList = accounts.listAccounts();
@@ -348,30 +367,32 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(
             CommandsProvider.viewId,
             new CommandsProvider(context),
-            { webviewOptions: { retainContextWhenHidden: true } }
+            { webviewOptions: { retainContextWhenHidden: false } }
         ),
         vscode.window.registerWebviewViewProvider(
             DokployProvider.viewId,
             new DokployProvider(context),
-            { webviewOptions: { retainContextWhenHidden: true } }
+            { webviewOptions: { retainContextWhenHidden: false } }
         ),
         vscode.commands.registerCommand('ultraview.openCommands', () => {
             CommandsProvider.openAsPanel(context);
         }),
-        vscode.commands.registerCommand('ultraview.openDrawings', () => {
+        vscode.commands.registerCommand('ultraview.openDrawings', async () => {
+            await storeReady;
             DrawingProvider.openDrawingPanel(context, drawingManager);
         }),
         vscode.commands.registerCommand('ultraview.openDokployPanel', () => {
             DokployProvider.openAsPanel(context);
         }),
-        vscode.commands.registerCommand('ultraview.openBucketManager', () => {
-            BucketManagerProvider.openAsPanel(context);
+        vscode.commands.registerCommand('ultraview.openBucketManager', async () => {
+            (await import('./providers/bucketManagerProvider')).BucketManagerProvider.openAsPanel(context);
         }),
         vscode.commands.registerCommand('ultraview.configureS3Backup', async () => {
             await configureS3BackupCredentials(context);
             gitProvider.postState();
         }),
         vscode.commands.registerCommand('ultraview.s3BackupProjectById', async (projectId: string) => {
+            await storeReady;
             const { getS3Credentials, backupProject } = await import('./s3backup');
             const creds = await getS3Credentials(context);
             if (!creds) {
@@ -401,6 +422,7 @@ export async function activate(context: vscode.ExtensionContext) {
             );
         }),
         vscode.commands.registerCommand('ultraview.s3BackupAll', async () => {
+            await storeReady;
             const { getS3Credentials, backupProject } = await import('./s3backup');
             const creds = await getS3Credentials(context);
             if (!creds) {
@@ -475,7 +497,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }),
         vscode.commands.registerCommand('ultraview.enableCustomComments', async () => {
-            const result = await customComments.enable();
+            const result = await getCustomComments().enable();
             if (result.success) {
                 vscode.window.showInformationMessage(result.message);
             } else {
@@ -483,7 +505,7 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }),
         vscode.commands.registerCommand('ultraview.disableCustomComments', async () => {
-            const result = await customComments.disable();
+            const result = await getCustomComments().disable();
             if (result.success) {
                 vscode.window.showInformationMessage(result.message);
             } else {
@@ -491,14 +513,15 @@ export async function activate(context: vscode.ExtensionContext) {
             }
         }),
         vscode.commands.registerCommand('ultraview.toggleCustomComments', () => {
-            customComments.toggle();
+            void getCustomComments().toggle();
         }),
         vscode.commands.registerCommand('ultraview.refreshCustomComments', () => {
-            customComments.updateCss();
+            getCustomComments().updateCss();
         }),
 
         // ── Sync folder management ──────────────────────────────────────────
         vscode.commands.registerCommand('ultraview.setSyncFolder', async () => {
+            await storeReady;
             await sharedStore.changeSyncDirectory();
         }),
         vscode.commands.registerCommand('ultraview.showSyncFolder', () => {
@@ -514,4 +537,7 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 }
 
-export function deactivate() {}
+export async function deactivate() {
+    await storeReady?.catch(() => {});
+    await sharedStore?.dispose();
+}

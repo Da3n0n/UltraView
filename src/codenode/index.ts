@@ -119,7 +119,7 @@ export async function buildCodeGraphStreaming(
     ];
 
     if (readableExts.includes(ext)) {
-      try { text = fs.readFileSync(fp, 'utf8'); } catch {}
+      try { text = await readGraphSource(fp); } catch {}
     }
 
     const batchNodes: CodeNode[] = [];
@@ -198,7 +198,7 @@ export async function buildCodeGraphStreaming(
     const ext = path.extname(fp).toLowerCase();
     if (!['.ts', '.tsx', '.js', '.jsx'].includes(ext)) continue;
     let text2 = '';
-    try { text2 = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+    try { text2 = await readGraphSource(fp); } catch { continue; }
 
     const importedItems = getNamedImports(fp, text2, allFiles);
     for (const [local, qualifiedId] of importedItems) {
@@ -275,7 +275,7 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
     ];
 
     if (readableExts.includes(ext)) {
-      try { text = fs.readFileSync(fp, 'utf8'); } catch {}
+      try { text = await readGraphSource(fp); } catch {}
     }
 
     const detectorFileExts = new Set(['.ts', '.tsx', '.js', '.jsx', '.md', '.mdx', '.markdown']);
@@ -324,7 +324,7 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
     const ext = path.extname(fp).toLowerCase();
     if (!['.ts', '.tsx', '.js', '.jsx'].includes(ext)) continue;
     let text2 = '';
-    try { text2 = fs.readFileSync(fp, 'utf8'); } catch { continue; }
+    try { text2 = await readGraphSource(fp); } catch { continue; }
 
     const importedItems = getNamedImports(fp, text2, allFiles);
     for (const [local, qualifiedId] of importedItems) {
@@ -365,4 +365,11 @@ export async function buildCodeGraph(): Promise<CodeGraph> {
   }
 
   return { nodes, edges: dedupedEdges };
+}
+
+async function readGraphSource(filePath: string): Promise<string> {
+  const stats = await fs.promises.stat(filePath);
+  // Generated/minified megafiles are not useful inputs for interactive graphs.
+  if (stats.size > 2 * 1024 * 1024) return '';
+  return fs.promises.readFile(filePath, 'utf8');
 }

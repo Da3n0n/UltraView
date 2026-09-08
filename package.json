@@ -255,7 +255,7 @@
                 },
                 "ultraview.gitNexus.autoStart": {
                     "type": "boolean",
-                    "default": true,
+                    "default": false,
                     "description": "Start the local GitNexus service when its Ultraview panel opens."
                 },
                 "ultraview.gitNexus.port": {
@@ -778,7 +778,7 @@
         "url": "https://github.com/Da3n0n/UltraView.git"
     },
     "scripts": {
-        "vscode:prepublish": "npm run prepare:gitnexus-runtime && npm run compile",
+        "vscode:prepublish": "npm run compile",
         "compile": "webpack",
         "watch": "webpack --watch",
         "package": "npm run bump-and-package",
@@ -789,6 +789,9 @@
         "lint:fix": "eslint src --ext .ts --fix",
         "format": "prettier --write \"src/**/*.ts\" \"src/**/*.js\"",
         "test": "echo \"no tests\"",
+        "test:performance": "node scripts/test-performance.cjs",
+        "runtime:download-manifest": "node scripts/prepare-runtime-download.mjs",
+        "runtime:verify-downloads": "node scripts/verify-runtime-downloads.mjs",
         "test:theme": "node scripts/validate-theme-roundtrip.js",
         "gitnexus": "node scripts/gitnexus.mjs",
         "setup:gitnexus": "node scripts/setup-gitnexus.mjs",

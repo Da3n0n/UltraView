@@ -16,4 +16,14 @@ webpack.config.js
 package-lock.json
 **/*.map
 **/*.ts
-!dist/**
+dist/**/*.map
+web/**
+**/node_modules/**
+scripts/**
+.claude/**
+.agents/**
+.github/**
+AGENTS.md
+
+resources/gitnexus-runtime-*.tar.gz
+resources/gitnexus-runtime-archive.json

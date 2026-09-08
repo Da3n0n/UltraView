@@ -2,18 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildDbHtml } from '../webview/dbHtml';
-import type { SqlJsStatic, Database } from 'sql.js';
-
-let SQL: SqlJsStatic | null = null;
-
-async function getSqlJs(extUri: vscode.Uri): Promise<SqlJsStatic> {
-  if (SQL) { return SQL; }
-   
-  const initSqlJsFn = require('sql.js') as (cfg?: object) => Promise<SqlJsStatic>;
-  const wasmPath = path.join(extUri.fsPath, 'dist', 'sql-wasm.wasm');
-  SQL = await initSqlJsFn({ locateFile: () => wasmPath });
-  return SQL!;
-}
+import { SqliteWorkerClient } from '../database/sqliteWorkerClient';
 
 interface ColInfo { name: string; type: string; pk: number; notnull: number; defaultValue?: string | null; }
 type SqliteBindValue = number | string | Uint8Array | null;
@@ -104,13 +93,11 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
       localResourceRoots: [vscode.Uri.file(path.join(this.ctx.extensionPath, 'dist'))],
     };
     const filePath = document.uri.fsPath;
-    let db: Database | null = null;
+    let db: SqliteWorkerClient | null = null;
 
     const openDb = async () => {
       if (!db) {
-        const sql = await getSqlJs(this.ctx.extensionUri);
-        const buf = await fs.promises.readFile(filePath);
-        db = new sql.Database(buf);
+        db = new SqliteWorkerClient(filePath, this.ctx.extensionPath);
       }
       return db!;
     };
@@ -119,24 +106,23 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
       if (!db) {
         return;
       }
-      const data = db.export();
-      await fs.promises.writeFile(filePath, Buffer.from(data));
+      await db.persist();
     };
 
-    const loadTables = (d: Database) => {
-      const tableRes = d.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`);
+    const loadTables = async (d: SqliteWorkerClient) => {
+      const tableRes = await d.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`);
       const tableNames = tableRes.length > 0 ? tableRes[0].values.map((r) => String(r[0])) : [];
-      return tableNames.map((name) => {
-        const colsRes = d.exec(`PRAGMA table_info(${quoteIdentifier(name)})`);
+      return Promise.all(tableNames.map(async (name) => {
+        const colsRes = await d.exec(`PRAGMA table_info(${quoteIdentifier(name)})`);
         const cols: ColInfo[] = colsRes.length > 0
           ? colsRes[0].values.map((r) => ({ name: String(r[1]), type: String(r[2]), pk: Number(r[5]), notnull: Number(r[3]), defaultValue: r[4] === null ? null : String(r[4]) }))
           : [];
         return { name, rowCount: null, columns: cols };
-      });
+      }));
     };
 
     const rebuildTable = async (
-      d: Database,
+      d: SqliteWorkerClient,
       tableName: string,
       nextColumns: ColInfo[],
       sourceColumns: string[]
@@ -162,19 +148,19 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
         columnSql.push(`PRIMARY KEY (${pkColumns.map((column) => quoteIdentifier(column.name)).join(', ')})`);
       }
 
-      d.run('BEGIN');
+      await d.run('BEGIN');
       try {
-        d.run(`ALTER TABLE ${quoteTableReference(tableName)} RENAME TO ${quoteIdentifier(tempTable)}`);
-        d.run(`CREATE TABLE ${quoteTableReference(tableName)} (${columnSql.join(', ')})`);
-        d.run(
+        await d.run(`ALTER TABLE ${quoteTableReference(tableName)} RENAME TO ${quoteIdentifier(tempTable)}`);
+        await d.run(`CREATE TABLE ${quoteTableReference(tableName)} (${columnSql.join(', ')})`);
+        await d.run(
           `INSERT INTO ${quoteTableReference(tableName)} (${nextColumns.map((column) => quoteIdentifier(column.name)).join(', ')}) ` +
           `SELECT ${sourceColumns.map((column) => quoteIdentifier(column)).join(', ')} FROM ${quoteIdentifier(tempTable)}`
         );
-        d.run(`DROP TABLE ${quoteIdentifier(tempTable)}`);
-        d.run('COMMIT');
+        await d.run(`DROP TABLE ${quoteIdentifier(tempTable)}`);
+        await d.run('COMMIT');
       } catch (error) {
         try {
-          d.run('ROLLBACK');
+          await d.run('ROLLBACK');
         } catch {
           // ignore rollback errors
         }
@@ -184,7 +170,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
 
     const postSchema = async () => {
       const d = await openDb();
-      const tables = loadTables(d);
+      const tables = await loadTables(d);
       const dbSize = fs.statSync(filePath).size;
       panel.webview.postMessage({
         type: 'schema',
@@ -201,7 +187,11 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
 
     panel.webview.html = buildDbHtml(this.ctx.extensionPath, panel.webview, 'SQLite', filePath, path.basename(filePath));
 
-    panel.webview.onDidReceiveMessage(async (msg) => {
+    let messageQueue = Promise.resolve();
+    let disposed = false;
+    panel.webview.onDidReceiveMessage((msg) => {
+      if (disposed) return;
+      messageQueue = messageQueue.then(async () => {
       try {
         switch (msg.type) {
           case 'ready': {
@@ -212,20 +202,20 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
             const d = await openDb();
             const pageSize = msg.pageSize ?? 200;
             const offset = (msg.page ?? 0) * pageSize;
-            const tables = loadTables(d);
+            const tables = await loadTables(d);
             const tableMeta = tables.find((table) => table.name === msg.table);
             if (!tableMeta) {
               throw new Error(`Table not found: ${msg.table}`);
             }
 
             // Fetch row count for this table specifically to update the UI
-            const cntRes = d.exec(`SELECT COUNT(*) FROM ${quoteTableReference(String(msg.table))}`);
+            const cntRes = await d.exec(`SELECT COUNT(*) FROM ${quoteTableReference(String(msg.table))}`);
             const rowCount = cntRes.length > 0 ? Number(cntRes[0].values[0][0]) : 0;
 
             const selectIdentity = tableMeta.columns.some((column) => column.pk)
               ? '*'
               : 'rowid AS __uv_row_id, *';
-            const res = d.exec(`SELECT ${selectIdentity} FROM ${quoteTableReference(String(msg.table))} LIMIT ${pageSize} OFFSET ${offset}`);
+            const res = await d.exec(`SELECT ${selectIdentity} FROM ${quoteTableReference(String(msg.table))} LIMIT ${pageSize} OFFSET ${offset}`);
             if (res.length === 0) {
               panel.webview.postMessage({ type: 'tableData', table: msg.table, columns: [], rows: [], page: msg.page ?? 0, rowCount, rowIds: [] });
               break;
@@ -248,9 +238,10 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
           }
           case 'runQuery': {
             const d = await openDb();
-            const results = d.exec(msg.sql);
+            const rowLimit = Math.max(1, Math.min(10000, vscode.workspace.getConfiguration('ultraview.database').get<number>('autoQueryLimit', 1000)));
+            const results = await d.exec(msg.sql, rowLimit);
             if (results.length === 0) {
-              const changes = d.getRowsModified();
+              const changes = await d.getRowsModified();
               if (changes > 0 || /^\s*(insert|update|delete|create|drop|alter|replace|vacuum|pragma)\b/i.test(String(msg.sql))) {
                 await persistDb();
               }
@@ -265,13 +256,13 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
                 columns.forEach((c, i) => { obj[c] = row[i]; });
                 return obj;
               });
-              panel.webview.postMessage({ type: 'queryResult', columns, rows });
+              panel.webview.postMessage({ type: 'queryResult', columns, rows, rowLimit });
             }
             break;
           }
           case 'updateCell': {
             const d = await openDb();
-            const tables = loadTables(d);
+            const tables = await loadTables(d);
             const tableMeta = tables.find((table) => table.name === msg.table);
             if (!tableMeta) {
               throw new Error(`Table not found: ${msg.table}`);
@@ -287,7 +278,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
               sql += ' WHERE rowid = ?';
               params.push(selector.value);
             }
-            d.run(sql, params);
+            await d.run(sql, params);
             await persistDb();
             panel.webview.postMessage({ type: 'actionComplete', message: 'Cell updated.' });
             break;
@@ -296,11 +287,11 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
             const d = await openDb();
             const entries = Object.entries(msg.values || {});
             if (entries.length === 0) {
-              d.run(`INSERT INTO ${quoteTableReference(String(msg.table))} DEFAULT VALUES`);
+              await d.run(`INSERT INTO ${quoteTableReference(String(msg.table))} DEFAULT VALUES`);
             } else {
               const columns = entries.map(([column]) => quoteIdentifier(column)).join(', ');
               const placeholders = entries.map(() => '?').join(', ');
-              d.run(
+              await d.run(
                 `INSERT INTO ${quoteTableReference(String(msg.table))} (${columns}) VALUES (${placeholders})`,
                 entries.map(([, value]) => asSqliteValue(value))
               );
@@ -322,7 +313,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
               sql += ' WHERE rowid = ?';
               params.push(selector.value);
             }
-            d.run(sql, params);
+            await d.run(sql, params);
             await persistDb();
             panel.webview.postMessage({ type: 'actionComplete', message: 'Row deleted.' });
             break;
@@ -347,7 +338,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
               }
               return parts.join(' ');
             }).join(', ');
-            d.run(`CREATE TABLE ${quoteTableReference(tableName)} (${columnSql})`);
+            await d.run(`CREATE TABLE ${quoteTableReference(tableName)} (${columnSql})`);
             await persistDb();
             await postSchema();
             panel.webview.postMessage({ type: 'actionComplete', message: 'Table created.' });
@@ -355,7 +346,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
           }
           case 'deleteTable': {
             const d = await openDb();
-            d.run(`DROP TABLE ${quoteTableReference(String(msg.table))}`);
+            await d.run(`DROP TABLE ${quoteTableReference(String(msg.table))}`);
             await persistDb();
             await postSchema();
             panel.webview.postMessage({ type: 'actionComplete', message: 'Table deleted.' });
@@ -377,7 +368,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
             if (column.defaultValue?.trim()) {
               parts.push(`DEFAULT ${column.defaultValue.trim()}`);
             }
-            d.run(parts.join(' '));
+            await d.run(parts.join(' '));
             await persistDb();
             await postSchema();
             panel.webview.postMessage({ type: 'actionComplete', message: 'Column added.' });
@@ -385,7 +376,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
           }
           case 'deleteColumn': {
             const d = await openDb();
-            d.run(
+            await d.run(
               `ALTER TABLE ${quoteTableReference(String(msg.table))} DROP COLUMN ${quoteIdentifier(String(msg.column))}`
             );
             await persistDb();
@@ -395,7 +386,7 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
           }
           case 'updateColumn': {
             const d = await openDb();
-            const tables = loadTables(d);
+            const tables = await loadTables(d);
             const tableMeta = tables.find((table) => table.name === msg.table);
             if (!tableMeta) {
               throw new Error(`Table not found: ${msg.table}`);
@@ -424,8 +415,12 @@ export class SqliteProvider implements vscode.CustomReadonlyEditorProvider {
       } catch (err) {
         panel.webview.postMessage({ type: 'error', message: String(err) });
       }
+      });
     });
 
-    panel.onDidDispose(() => { try { db?.close(); } catch { /* ignore */ } });
+    panel.onDidDispose(() => {
+      disposed = true;
+      void messageQueue.finally(() => db?.close()).catch(() => {});
+    });
   }
 }

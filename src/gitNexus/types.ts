@@ -45,6 +45,7 @@ export interface GitNexusSnapshot {
 }
 
 export interface GitNexusRuntimeStatus {
+    needsDownload?: boolean;
     running: boolean;
     managed: boolean;
     installing: boolean;

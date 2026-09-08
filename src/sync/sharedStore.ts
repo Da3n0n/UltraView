@@ -103,6 +103,10 @@ export class SharedStore extends EventEmitter {
     private data: SyncData = { ...EMPTY_DATA };
     private writing = false;
     private pendingWrite: NodeJS.Timeout | null = null;
+    private pendingReload?: NodeJS.Timeout;
+    private saveInFlight?: Promise<void>;
+    private revision = 0;
+    private disposing?: Promise<void>;
 
     constructor(private context: vscode.ExtensionContext) {
         super();
@@ -115,7 +119,7 @@ export class SharedStore extends EventEmitter {
     /** Call once on activation to load data and start watching. */
     async initialize(): Promise<void> {
         await this._ensureDir();
-        this._load();
+        await this._load();
         this._startWatcher();
         // Migrate old globalState data into the file (one-time)
         await this._migrate();
@@ -123,12 +127,23 @@ export class SharedStore extends EventEmitter {
 
     /** Returns the current in-memory data (safe copy). */
     read(): SyncData {
-        return JSON.parse(JSON.stringify(this.data)) as SyncData;
+        // Records contain primitives (including immutable drawing snapshot strings).
+        // Copy containers without serializing every drawing for a project lookup.
+        return {
+            ...this.data,
+            accounts: this.data.accounts.map(item => ({ ...item })),
+            sshKeys: this.data.sshKeys.map(item => ({ ...item })),
+            projects: this.data.projects.map(item => ({ ...item })),
+            profiles: this.data.profiles.map(item => ({ ...item })),
+            localAccounts: this.data.localAccounts.map(item => ({ ...item })),
+            drawings: this.data.drawings.map(item => ({ ...item })),
+        };
     }
 
     /** Merge a partial patch into the data and flush to disk. */
     write(patch: Partial<SyncData>): void {
         this.data = { ...this.data, ...patch };
+        this.revision++;
         this._scheduleSave();
     }
 
@@ -176,12 +191,13 @@ export class SharedStore extends EventEmitter {
         // Migrate data to new location
         const snapshot = this.read();
         this._stopWatcher();
+        await this._save();
         this.syncDir = chosen;
         this.syncFile = path.join(chosen, SYNC_FILE_NAME);
         await this._ensureDir();
 
         // If there's already data there, merge (prefer existing file on disk)
-        const onDisk = this._readFile();
+        const onDisk = await this._readFile();
         if (onDisk) {
             // Merge: disk data wins for existing IDs, our current data fills any gaps
             this.data = this._merge(onDisk, snapshot);
@@ -189,7 +205,7 @@ export class SharedStore extends EventEmitter {
             this.data = snapshot;
         }
 
-        this._save();
+        await this._save();
         await this.context.globalState.update(STATE_KEY_SYNC_DIR, chosen);
         this._startWatcher();
         this.emit('changed');
@@ -199,9 +215,11 @@ export class SharedStore extends EventEmitter {
         );
     }
 
-    dispose(): void {
+    async dispose(): Promise<void> {
+        if (this.disposing) return this.disposing;
         this._stopWatcher();
-        if (this.pendingWrite) clearTimeout(this.pendingWrite);
+        this.disposing = this._save();
+        return this.disposing;
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
@@ -212,16 +230,16 @@ export class SharedStore extends EventEmitter {
         } catch { /* already exists or permission error — handled at read time */ }
     }
 
-    private _load(): void {
-        const onDisk = this._readFile();
+    private async _load(): Promise<void> {
+        const onDisk = await this._readFile();
         if (onDisk) {
             this.data = onDisk;
         }
     }
 
-    private _readFile(): SyncData | null {
+    private async _readFile(): Promise<SyncData | null> {
         try {
-            const raw = fs.readFileSync(this.syncFile, 'utf-8');
+            const raw = await fs.promises.readFile(this.syncFile, 'utf-8');
             const parsed = JSON.parse(raw) as SyncData;
             if (parsed && typeof parsed === 'object' && typeof parsed.version === 'number') {
                 return parsed;
@@ -232,21 +250,27 @@ export class SharedStore extends EventEmitter {
 
     private _scheduleSave(): void {
         if (this.pendingWrite) clearTimeout(this.pendingWrite);
-        this.pendingWrite = setTimeout(() => { this._save(); }, 100);
+        this.pendingWrite = setTimeout(() => { void this._save(); }, 100);
     }
 
-    private _save(): void {
-        if (this.writing) {
-            this._scheduleSave();
-            return;
-        }
+    private async _save(): Promise<void> {
+        if (this.pendingWrite) clearTimeout(this.pendingWrite);
+        this.pendingWrite = null;
+        const pending = (this.saveInFlight ?? Promise.resolve()).then(() => this.saveSnapshot());
+        this.saveInFlight = pending;
+        try { await pending; }
+        finally { if (this.saveInFlight === pending) this.saveInFlight = undefined; }
+    }
+
+    private async saveSnapshot(): Promise<void> {
         this.writing = true;
         try {
-            const json = JSON.stringify(this.data, null, 2);
+            const json = JSON.stringify(this.data);
             // Atomic write: write to temp file then rename
-            const tmp = this.syncFile + '.tmp';
-            fs.writeFileSync(tmp, json, 'utf-8');
-            fs.renameSync(tmp, this.syncFile);
+            const destination = this.syncFile;
+            const tmp = destination + `.${process.pid}.tmp`;
+            await fs.promises.writeFile(tmp, json, 'utf-8');
+            await fs.promises.rename(tmp, destination);
         } catch (err: any) {
             console.warn('[Ultraview SharedStore] Failed to save sync.json:', err?.message);
         } finally {
@@ -259,9 +283,13 @@ export class SharedStore extends EventEmitter {
             this.watcher = fs.watch(this.syncDir, (event, filename) => {
                 if (filename === SYNC_FILE_NAME && !this.writing) {
                     // Debounce to avoid reading mid-write from another process
-                    setTimeout(() => {
-                        const fresh = this._readFile();
-                        if (fresh) {
+                    if (this.pendingReload) clearTimeout(this.pendingReload);
+                    this.pendingReload = setTimeout(async () => {
+                        this.pendingReload = undefined;
+                        if (this.writing || this.pendingWrite) return;
+                        const revision = this.revision;
+                        const fresh = await this._readFile();
+                        if (fresh && revision === this.revision && !this.writing && !this.pendingWrite) {
                             this.data = fresh;
                             this.emit('changed');
                         }
@@ -274,6 +302,9 @@ export class SharedStore extends EventEmitter {
     }
 
     private _stopWatcher(): void {
+        this.revision++;
+        if (this.pendingReload) clearTimeout(this.pendingReload);
+        this.pendingReload = undefined;
         try { this.watcher?.close(); } catch { /* ignore */ }
         this.watcher = undefined;
     }
@@ -343,7 +374,7 @@ export class SharedStore extends EventEmitter {
                 this.data
             );
             this.data = merged;
-            this._save();
+            await this._save();
 
             vscode.window.showInformationMessage(
                 `✅ Ultraview: Migrated ${oldAccounts.length} account(s) and ${oldProjects.length} project(s) to shared sync file at ${this.syncFile}`

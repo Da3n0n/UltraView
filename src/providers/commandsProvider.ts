@@ -10,9 +10,10 @@ export class CommandsProvider implements vscode.WebviewViewProvider {
   private static readonly activeWebviews = new Set<vscode.Webview>();
   private view?: vscode.WebviewView;
   private refreshTimer?: NodeJS.Timeout;
+  private refreshWatchers: vscode.Disposable[] = [];
 
   constructor(private context: vscode.ExtensionContext) {
-    this.registerRefreshWatchers();
+    context.subscriptions.push({ dispose: () => this.stopRefreshWatchers() });
   }
 
   static openAsPanel(ctx: vscode.ExtensionContext): void {
@@ -43,6 +44,8 @@ export class CommandsProvider implements vscode.WebviewViewProvider {
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
+    if (webviewView.visible) this.registerRefreshWatchers();
+    webviewView.onDidDispose(() => { this.stopRefreshWatchers(); this.view = undefined; });
     CommandsProvider.trackWebview(webviewView.webview, webviewView.onDidDispose);
     webviewView.webview.options = {
       enableScripts: true,
@@ -66,14 +69,17 @@ export class CommandsProvider implements vscode.WebviewViewProvider {
     });
 
     webviewView.onDidChangeVisibility(() => {
-      if (webviewView.visible) this.postState();
+      if (webviewView.visible) {
+        this.registerRefreshWatchers();
+        void this.postState();
+      } else this.stopRefreshWatchers();
     });
   }
 
   private async postState(): Promise<void> {
-    if (!this.view) return;
+    if (!this.view?.visible) return;
     const commands = await getWorkspaceCommands();
-    this.view.webview.postMessage({ type: 'state', commands });
+    if (this.view?.visible) this.view.webview.postMessage({ type: 'state', commands });
   }
 
   private static trackWebview(
@@ -94,6 +100,7 @@ export class CommandsProvider implements vscode.WebviewViewProvider {
   }
 
   private registerRefreshWatchers(): void {
+    if (this.refreshWatchers.length) return;
     const patterns = [
       '**/package.json',
       '**/justfile',
@@ -146,15 +153,20 @@ export class CommandsProvider implements vscode.WebviewViewProvider {
       '**/*.js',
     ];
 
-    for (const pattern of patterns) {
+    // One brace pattern avoids duplicate events from overlapping script patterns.
+    const uniquePatterns = patterns.filter(pattern => !/^\*\*\/(scripts|tools|bin|test|tests|__tests__)\//.test(pattern));
+    for (const pattern of [`{${uniquePatterns.join(',')}}`]) {
       const watcher = vscode.workspace.createFileSystemWatcher(pattern);
       const refresh = () => this.scheduleRefresh();
 
-      watcher.onDidCreate(refresh, undefined, this.context.subscriptions);
-      watcher.onDidChange(refresh, undefined, this.context.subscriptions);
-      watcher.onDidDelete(refresh, undefined, this.context.subscriptions);
-      this.context.subscriptions.push(watcher);
+      this.refreshWatchers.push(watcher, watcher.onDidCreate(refresh), watcher.onDidChange(refresh), watcher.onDidDelete(refresh));
     }
+  }
+
+  private stopRefreshWatchers(): void {
+    for (const watcher of this.refreshWatchers.splice(0)) watcher.dispose();
+    if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
   }
 
   private scheduleRefresh(): void {

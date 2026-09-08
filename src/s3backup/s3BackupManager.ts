@@ -89,14 +89,15 @@ async function withClockSkewRetry<T>(
         if (!serverTime) throw e;
 
         const correctedClient = makeS3Client(creds, serverTime - Date.now());
-        return await fn(correctedClient);
-    }
+        try { return await fn(correctedClient); }
+        finally { correctedClient.destroy(); }
+    } finally { client.destroy(); }
 }
 
-function* walkDir(dir: string, base: string): Generator<{ absPath: string; relPath: string }> {
+async function* walkDir(dir: string, base: string): AsyncGenerator<{ absPath: string; relPath: string }> {
     let entries: fs.Dirent[];
     try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
     } catch {
         return;
     }
@@ -161,46 +162,47 @@ export async function backupProject(
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
     const prefix = `${sanitized}/${stamp}/`;
 
-    const files = [...walkDir(projectPath, projectPath)];
-    if (files.length === 0) {
-        throw new Error('No files found in project folder.');
-    }
-
     let done = 0;
     let totalSize = 0;
-
-    for (const { absPath, relPath } of files) {
-        let fileBuffer: Buffer;
+    const upload = async ({ absPath, relPath }: { absPath: string; relPath: string }) => {
         try {
-            fileBuffer = fs.readFileSync(absPath);
-        } catch {
-            done++;
-            continue;
-        }
-
-        totalSize += fileBuffer.length;
-
-        try {
-            await withClockSkewRetry(creds, (client) =>
-                client.send(
+            const stats = await fs.promises.stat(absPath);
+            await withClockSkewRetry(creds, async (client) => {
+                const body = fs.createReadStream(absPath);
+                try { await client.send(
                     new PutObjectCommand({
                         Bucket: creds.bucket,
                         Key: `${prefix}${relPath}`,
-                        Body: fileBuffer,
-                        ContentLength: fileBuffer.length,
+                        Body: body,
+                        ContentLength: stats.size,
                         ContentType: guessContentType(relPath),
                     })
-                )
-            );
+                ); } finally { body.destroy(); }
+            });
+            totalSize += stats.size;
         } catch (e: any) {
             throw new Error(`Failed to upload ${relPath}: ${e?.message ?? e}`);
         }
 
         done++;
-        if (done % 10 === 0 || done === files.length) {
-            onProgress?.(`Uploading... ${done}/${files.length} files`);
+        onProgress?.(`Uploaded ${done} files`);
+    };
+    let batch: Array<Promise<void>> = [];
+    for await (const file of walkDir(projectPath, projectPath)) {
+        const task = upload(file);
+        void task.catch(() => {});
+        batch.push(task);
+        if (batch.length === 3) {
+            const results = await Promise.allSettled(batch);
+            const failure = results.find(result => result.status === 'rejected') as PromiseRejectedResult | undefined;
+            if (failure) throw failure.reason;
+            batch = [];
         }
     }
+    const results = await Promise.allSettled(batch);
+    const failure = results.find(result => result.status === 'rejected') as PromiseRejectedResult | undefined;
+    if (failure) throw failure.reason;
+    if (done === 0) throw new Error('No files found in project folder.');
 
     return {
         key: prefix,

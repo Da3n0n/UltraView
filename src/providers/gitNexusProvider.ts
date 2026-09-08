@@ -105,8 +105,9 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
             return Boolean(candidate) && path.resolve(candidate!).toLowerCase() === path.resolve(workspacePath).toLowerCase();
         });
         if (!indexed) {
-            await this.analyze(webview, false);
-            return true;
+            // Opening/restoring a view must not start a workspace-wide index job.
+            // The original UI and explicit Analyze command can create the index.
+            return false;
         }
 
         try {
@@ -172,12 +173,14 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
     private async handle(message: Record<string, unknown>, webview: vscode.Webview): Promise<void> {
         try {
             switch (message.type) {
-                case 'ready':
-                    await webview.postMessage({ type: 'runtime', status: await this.runtime.status() });
-                    if (vscode.workspace.getConfiguration('ultraview.gitNexus').get<boolean>('autoStart', true)) {
+                case 'ready': {
+                    const status = await this.runtime.status();
+                    await webview.postMessage({ type: 'runtime', status });
+                    if (status.running || (!status.needsDownload && vscode.workspace.getConfiguration('ultraview.gitNexus').get<boolean>('autoStart', false))) {
                         await this.openOriginalUi(webview);
-                    }
+                    } else await webview.postMessage({ type: 'idle' });
                     break;
+                }
                 case 'refresh':
                 case 'start':
                     await this.openOriginalUi(webview);
@@ -198,6 +201,9 @@ export class GitNexusProvider implements vscode.WebviewViewProvider, vscode.Disp
                 case 'install':
                     await this.runtime.install();
                     await this.openOriginalUi(webview);
+                    break;
+                case 'cancelInstall':
+                    this.runtime.cancelInstall();
                     break;
                 case 'updateVendor':
                     await this.updateVendor();

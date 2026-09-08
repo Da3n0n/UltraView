@@ -1,0 +1,37 @@
+name: Prepare GitNexus runtime release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows-runtime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run setup:gitnexus
+      - run: npm run prepare:gitnexus-runtime
+      - name: Prepare manifest and draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $marker = Get-Content resources/gitnexus-runtime-archive.json | ConvertFrom-Json
+          $tag = "runtime-$($marker.version)-$($marker.commit.Substring(0,12))-$($marker.customizationFingerprint.Substring(0,12))"
+          $asset = "gitnexus-runtime-$($marker.platform).tar.gz"
+          node scripts/prepare-runtime-download.mjs "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$asset"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; runtime assets are immutable." }
+          gh release create $tag "resources/$asset" resources/gitnexus-downloads.json --draft --title "GitNexus runtime $($marker.version)" --notes "Windows x64 runtime and checksum manifest. Publish this draft and copy its exact download manifest into the extension before releasing Ultraview."
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runtime-download-manifest
+          path: resources/gitnexus-downloads.json

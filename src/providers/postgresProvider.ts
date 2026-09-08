@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { EventEmitter } from 'events';
 import { buildDbHtml } from '../webview/dbHtml';
 
 interface PostgresField {
@@ -18,9 +19,25 @@ interface PostgresClient {
     query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<PostgresQueryResult<T>>;
 }
 
-const { Client } = require('pg') as {
-    Client: new (config: Record<string, unknown>) => PostgresClient;
-};
+function boundedQuery(client: PostgresClient, sql: string, limit: number): Promise<PostgresQueryResult> {
+    const { Query } = require('pg') as { Query: new (sql: string) => EventEmitter };
+    return new Promise((resolve, reject) => {
+        const query = new Query(sql);
+        const rows: Record<string, unknown>[] = [];
+        let firstResult: PostgresQueryResult | undefined;
+        // A row listener tells pg not to accumulate its own unbounded rows array.
+        query.on('row', (row, result) => {
+            firstResult ??= result;
+            if (result === firstResult && rows.length < limit) rows.push(row);
+        });
+        query.once('error', reject);
+        query.once('end', (result: PostgresQueryResult | PostgresQueryResult[]) => {
+            const selected = firstResult ?? (Array.isArray(result) ? result[0] : result);
+            resolve({ ...selected, rows });
+        });
+        (client as unknown as { query(query: EventEmitter): void }).query(query);
+    });
+}
 
 interface PostgresConnectionConfig {
     host: string;
@@ -467,6 +484,7 @@ export class PostgresProvider {
             if (!connected) {
                 const errors: string[] = [];
                 for (const attempt of attempts) {
+                    const { Client } = require('pg') as { Client: new (config: Record<string, unknown>) => PostgresClient };
                     const nextClient = new Client(createClientConfig(attempt));
                     try {
                         await nextClient.connect();
@@ -553,12 +571,14 @@ export class PostgresProvider {
                     }
                     case 'runQuery': {
                         const activeClient = await ensureConnected();
-                        const result = await activeClient.query(String(msg.sql));
+                        const rowLimit = Math.max(1, Math.min(10000, vscode.workspace.getConfiguration('ultraview.database').get<number>('autoQueryLimit', 1000)));
+                        const result = await boundedQuery(activeClient, String(msg.sql), rowLimit);
                         panel.webview.postMessage({
                             type: 'queryResult',
                             columns: result.fields.map((field) => field.name),
                             rows: result.rows,
-                            changes: typeof result.rowCount === 'number' ? result.rowCount : undefined,
+                            rowLimit,
+                            changes: !result.fields.length && typeof result.rowCount === 'number' ? result.rowCount : undefined,
                         });
                         break;
                     }

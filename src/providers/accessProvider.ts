@@ -4,7 +4,7 @@ import * as path from 'path';
 import { buildDbHtml } from '../webview/dbHtml';
 
  
-const MDBReader = require('mdb-reader');
+type MDBReaderType = typeof import('mdb-reader').default;
 
 export class AccessProvider implements vscode.CustomReadonlyEditorProvider {
   constructor(private readonly ctx: vscode.ExtensionContext) {}
@@ -23,42 +23,44 @@ export class AccessProvider implements vscode.CustomReadonlyEditorProvider {
     };
     const filePath = document.uri.fsPath;
 
-    let reader: typeof MDBReader | null = null;
-    const getReader = () => {
-      if (!reader) {
-        const buf = fs.readFileSync(filePath);
-        reader = new MDBReader(buf);
-      }
-      return reader;
+    let reader: InstanceType<MDBReaderType> | null = null;
+    let opening: Promise<InstanceType<MDBReaderType>> | undefined;
+    const getReader = async () => {
+      if (reader) return reader;
+      if (!opening) opening = (async () => {
+          const MDBReader = require('mdb-reader') as MDBReaderType;
+          const buf = await fs.promises.readFile(filePath);
+          reader = new MDBReader(buf);
+          return reader;
+      })();
+      try { return await opening; }
+      finally { opening = undefined; }
     };
 
     panel.webview.html = buildDbHtml(this.ctx.extensionPath, panel.webview, 'Access DB', filePath, path.basename(filePath));
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       try {
-        const r = getReader();
+        const r = await getReader();
         switch (msg.type) {
           case 'ready': {
             const tableNames: string[] = r.getTableNames();
             const tables = tableNames.map((name: string) => {
               const tbl = r.getTable(name);
               const cols = tbl.getColumnNames().map((c: string) => ({ name: c, type: 'text', pk: 0, notnull: 0 }));
-              return { name, rowCount: tbl.getData().length, columns: cols };
+              return { name, rowCount: null, columns: cols };
             });
-            const dbSize = fs.statSync(filePath).size;
+            const dbSize = (await fs.promises.stat(filePath)).size;
             panel.webview.postMessage({ type: 'schema', tables, dbSize, sourceLabel: filePath, dbType: 'Access DB (.mdb/.accdb)', dbName: path.basename(filePath) });
             break;
           }
           case 'getTableData': {
             const tbl = r.getTable(msg.table);
-            const allRows = tbl.getData();
-            const pageSize = msg.pageSize ?? 200;
-            const offset = (msg.page ?? 0) * pageSize;
-            const rows = allRows.slice(offset, offset + pageSize);
+            const pageSize = Math.max(1, Math.min(1000, Number(msg.pageSize) || 200));
+            const offset = Math.max(0, Number(msg.page) || 0) * pageSize;
+            const rows = tbl.getData({ rowOffset: offset, rowLimit: pageSize });
             const cols = tbl.getColumnNames() as string[];
-            const rowsAsObj = rows.map((row: unknown[]) =>
-              Object.fromEntries(cols.map((c: string, i: number) => [c, row[i]]))
-            );
+            const rowsAsObj = rows;
             panel.webview.postMessage({ type: 'tableData', table: msg.table, columns: cols, rows: rowsAsObj, page: msg.page ?? 0 });
             break;
           }

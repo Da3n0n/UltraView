@@ -43,6 +43,7 @@ export interface DbTableDataMessage {
 
 export interface DbQueryResultMessage {
   type: 'queryResult';
+  rowLimit?: number;
   columns?: string[];
   rows?: Record<string, unknown>[];
   changes?: number;

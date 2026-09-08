@@ -85,13 +85,23 @@ export class DuckDbProvider implements vscode.CustomReadonlyEditorProvider {
       }
     };
 
-    const query = (sql: string): Promise<unknown[]> =>
-      new Promise((resolve, reject) => {
+    const query = async (sql: string, rowLimit?: number): Promise<unknown[]> => {
+      openDb();
+      if (rowLimit !== undefined) {
+        if (typeof conn.stream !== 'function') throw new Error('Update the DuckDB native module to use bounded query results.');
+        const rows: unknown[] = [];
+        for await (const row of conn.stream(sql)) {
+          if (rows.length < rowLimit) rows.push(row);
+        }
+        return rows;
+      }
+      return new Promise((resolve, reject) => {
         openDb();
         conn.all(sql, (err: Error, rows: unknown[]) => {
           if (err) { reject(err); } else { resolve(rows); }
         });
       });
+    };
 
     const execute = (sql: string): Promise<void> =>
       new Promise((resolve, reject) => {
@@ -152,9 +162,10 @@ export class DuckDbProvider implements vscode.CustomReadonlyEditorProvider {
             break;
           }
           case 'runQuery': {
-            const rows = await query(msg.sql);
+            const rowLimit = Math.max(1, Math.min(10000, vscode.workspace.getConfiguration('ultraview.database').get<number>('autoQueryLimit', 1000)));
+            const rows = await query(msg.sql, rowLimit);
             const cols = rows.length > 0 ? Object.keys(rows[0] as object) : [];
-            panel.webview.postMessage({ type: 'queryResult', columns: cols, rows });
+            panel.webview.postMessage({ type: 'queryResult', columns: cols, rows, rowLimit });
             break;
           }
           case 'updateCell': {

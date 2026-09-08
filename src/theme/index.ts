@@ -112,7 +112,7 @@ async function repairTransparentPatchAfterUpdate(
   try {
     const paths = resolveInstallPaths(vscode.env.appRoot);
     const effect = getPreferredEffect();
-    if (isTransparentPatchCurrent(paths, effect)) {
+    if (await isTransparentPatchCurrent(paths, effect)) {
       if (wasEnabled !== true) {
         await context.globalState.update(STATE_ENABLED, true);
       }
@@ -133,10 +133,12 @@ async function repairTransparentPatchAfterUpdate(
   }
 }
 
-function isTransparentPatchCurrent(paths: InstallPaths, effect: EffectType): boolean {
-  const mainJs = fs.readFileSync(paths.mainJs, 'utf8');
-  const workbenchHtml = fs.readFileSync(paths.workbenchHtml, 'utf8');
-  const workbenchJs = fs.readFileSync(paths.workbenchJs, 'utf8');
+async function isTransparentPatchCurrent(paths: InstallPaths, effect: EffectType): Promise<boolean> {
+  const [mainJs, workbenchHtml, workbenchJs] = await Promise.all([
+    fs.promises.readFile(paths.mainJs, 'utf8'),
+    fs.promises.readFile(paths.workbenchHtml, 'utf8'),
+    fs.promises.readFile(paths.workbenchJs, 'utf8'),
+  ]);
   const hasTransparentWindow =
     effect === 'none'
       ? mainJs.includes(`transparent:!0/*${PATCH_MARKER}*/`)

@@ -10,7 +10,7 @@ import { GitAccounts } from '../git/gitAccounts';
 import { GitAccount, GitProfile, GitProvider as GitProviderType, AuthMethod } from '../git/types';
 import { applyLocalAccount, clearLocalAccount, getRemoteUrl } from '../git/gitCredentials';
 import { SharedStore } from '../sync/sharedStore';
-import { getS3Credentials } from '../s3backup';
+import { getS3Credentials } from '../s3backup/s3BackupSettings';
 import { ProjectCommand, scanCommands } from '../commands/commandScanner';
 import { createCommandTerminal } from '../utils/commandTerminal';
 
@@ -841,62 +841,82 @@ async function getProjectLocalStatus(
     }
 }
 
+const remoteStatusJobs = new Map<string, Promise<GitStatus>>();
+let activeRemoteStatusJobs = 0;
+const remoteStatusWaiters: Array<() => void> = [];
+
 async function getProjectGitStatus(projectPath: string, localStatus?: GitStatus): Promise<GitStatus> {
-    const run = createGitRunner(projectPath, 8000);
-    const status = localStatus
-        ? { ...localStatus }
-        : await getProjectLocalStatus(projectPath);
-    if (!status.isGitRepo) return status;
-    status.ahead = 0;
-    status.behind = 0;
+    const key = path.resolve(projectPath);
+    const existing = remoteStatusJobs.get(key);
+    if (existing) return existing;
+    const slot = new Promise<void>(resolve => {
+        if (activeRemoteStatusJobs < 2) { activeRemoteStatusJobs++; resolve(); }
+        else remoteStatusWaiters.push(resolve);
+    });
+    const pending = slot.then(async () => {
+        const run = createGitRunner(projectPath, 8000);
+        const status = localStatus
+            ? { ...localStatus }
+            : await getProjectLocalStatus(projectPath);
+        if (!status.isGitRepo) return status;
+        status.ahead = 0;
+        status.behind = 0;
 
-    // Fetch (with redirect-on-moved + transient retry) so the ahead/behind
-    // badge reflects the *real* remote state and never gets stuck on stale
-    // local refs. Quiet on success; soft-fail on outage so the badge still
-    // shows whatever the last good fetch recorded.
-    for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-            await withTransientRetry(
-                () => run('git fetch --quiet --prune --tags origin'),
-                'status-fetch'
-            );
-            break;
-        } catch (fetchErr: any) {
-            const stderr = fetchErr?.stderr ?? '';
-            const stdout = fetchErr?.stdout ?? '';
-            const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
-            if (moved) {
-                await rewriteOriginRemote(projectPath, moved, run);
-                continue;
-            }
-            break;
-        }
-    }
-
-    try {
-        const { stdout: revOut } = await run(
-            'git rev-list --left-right --count HEAD...@{upstream}'
-        );
-        const parts = revOut.trim().split(/\s+/);
-        status.ahead = parseInt(parts[0], 10) || 0;
-        status.behind = parseInt(parts[1], 10) || 0;
-    } catch {
-        // No upstream configured — try origin/<branch> directly
-        if (status.branch) {
+        // Fetch (with redirect-on-moved + transient retry) so the ahead/behind
+        // badge reflects the *real* remote state and never gets stuck on stale
+        // local refs. Quiet on success; soft-fail on outage so the badge still
+        // shows whatever the last good fetch recorded.
+        for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-                const { stdout: revOut } = await run(
-                    `git rev-list --left-right --count HEAD...origin/${status.branch}`
+                await withTransientRetry(
+                    () => run('git fetch --quiet --prune --tags origin'),
+                    'status-fetch'
                 );
-                const parts = revOut.trim().split(/\s+/);
-                status.ahead = parseInt(parts[0], 10) || 0;
-                status.behind = parseInt(parts[1], 10) || 0;
-            } catch {
-                /* no remote branch */
+                break;
+            } catch (fetchErr: any) {
+                const stderr = fetchErr?.stderr ?? '';
+                const stdout = fetchErr?.stdout ?? '';
+                const moved = parseMovedRepository(stderr) || parseMovedRepository(stdout);
+                if (moved) {
+                    await rewriteOriginRemote(projectPath, moved, run);
+                    continue;
+                }
+                break;
             }
         }
-    }
 
-    return status;
+        try {
+            const { stdout: revOut } = await run(
+                'git rev-list --left-right --count HEAD...@{upstream}'
+            );
+            const parts = revOut.trim().split(/\s+/);
+            status.ahead = parseInt(parts[0], 10) || 0;
+            status.behind = parseInt(parts[1], 10) || 0;
+        } catch {
+            // No upstream configured — try origin/<branch> directly
+            if (status.branch) {
+                try {
+                    const { stdout: revOut } = await run(
+                        `git rev-list --left-right --count HEAD...origin/${status.branch}`
+                    );
+                    const parts = revOut.trim().split(/\s+/);
+                    status.ahead = parseInt(parts[0], 10) || 0;
+                    status.behind = parseInt(parts[1], 10) || 0;
+                } catch {
+                    /* no remote branch */
+                }
+            }
+        }
+
+        return status;
+    }).finally(() => {
+        remoteStatusJobs.delete(key);
+        const next = remoteStatusWaiters.shift();
+        if (next) next();
+        else activeRemoteStatusJobs--;
+    });
+    remoteStatusJobs.set(key, pending);
+    return pending;
 }
 
 async function getCurrentBranch(projectPath: string): Promise<string> {
@@ -1982,11 +2002,14 @@ export class GitProvider implements vscode.WebviewViewProvider {
     private _projectWatchers = new Map<string, { projectPath: string; watcher: fs.FSWatcher }>();
     private _dirtyProjectIds = new Set<string>();
     private _projectWatcherDebounce?: NodeJS.Timeout;
+    private _refreshInFlight?: Promise<void>;
+    private _refreshQueued = false;
     constructor(context: vscode.ExtensionContext, store: SharedStore) {
         this.context = context;
         this.store = store;
         this.manager = new GitProjects(context, store);
         this.accounts = new GitAccounts(context, store);
+        context.subscriptions.push({ dispose: () => this._disposeProjectWatchers() });
     }
 
     async addRepo(): Promise<void> {
@@ -2234,17 +2257,22 @@ export class GitProvider implements vscode.WebviewViewProvider {
         webviewView.webview.html = buildGitHtml(this.context.extensionPath, webviewView.webview);
 
         // Hot-reload when another IDE writes the shared sync file
-        this.store.on('changed', () => this.postState());
+        const onStoreChanged = () => { void this.postState(); };
+        this.store.on('changed', onStoreChanged);
 
         // When the panel becomes visible again (e.g. user switches sidebar tabs),
         // immediately push cached statuses so badges are visible without waiting.
         webviewView.onDidChangeVisibility(() => {
             if (webviewView.visible) {
                 this.postState();
-            }
+            } else this._disposeProjectWatchers();
         });
 
-        webviewView.onDidDispose(() => this._disposeProjectWatchers());
+        webviewView.onDidDispose(() => {
+            this.store.off('changed', onStoreChanged);
+            this._disposeProjectWatchers();
+            this.view = undefined;
+        });
 
         webviewView.webview.onDidReceiveMessage(async (msg) => {
             switch (msg.type) {
@@ -2732,88 +2760,105 @@ export class GitProvider implements vscode.WebviewViewProvider {
 
     async postState() {
         if (!this.view?.visible) return;
-        const refreshSeq = ++this._statusRefreshSeq;
-        const projects = this.manager
-            .listProjects()
-            .slice()
-            .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
-        this._syncProjectWatchers(projects);
-        const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-        const accounts = this.accounts.listAccounts();
+        if (this._refreshInFlight) {
+            this._refreshQueued = true;
+            return this._refreshInFlight;
+        }
+        const refresh = async () => {
+            const refreshSeq = ++this._statusRefreshSeq;
+            const projects = this.manager
+                .listProjects()
+                .slice()
+                .sort((a, b) => (b.lastOpened ?? 0) - (a.lastOpened ?? 0));
+            this._syncProjectWatchers(projects);
+            const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+            const accounts = this.accounts.listAccounts();
 
-        // Find active project and its account
-        const activeProject = projects.find((p) => p.path === activeRepo);
-        const activeAccountId =
-            activeProject?.accountId ||
-            (activeRepo ? this.accounts.getLocalAccount(activeRepo)?.id : undefined);
+            // Find active project and its account
+            const activeProject = projects.find((p) => p.path === activeRepo);
+            const activeAccountId =
+                activeProject?.accountId ||
+                (activeRepo ? this.accounts.getLocalAccount(activeRepo)?.id : undefined);
 
-        // Compute auth status for each account
-        const accountsWithStatus = accounts.map((acc) => ({
-            ...acc,
-            authStatus: this.accounts.getAccountAuthStatus(acc),
-        }));
-
-        const activeRepoName = vscode.workspace.workspaceFolders?.[0]?.name ?? '';
-
-        // Use cached S3 cred check — avoids keychain reads on every refresh
-        const hasBackupBucket = await this._hasBackupBucket();
-
-        const buildMsg = (gitStatuses: Record<string, GitStatus>) => ({
-            type: 'state',
-            projects,
-            activeRepo,
-            activeRepoName,
-            accounts: accountsWithStatus,
-            activeAccountId: activeAccountId || null,
-            activeProjectId: activeProject?.id || null,
-            gitStatuses,
-            hasBackupBucket,
-        });
-
-        // Pass 1: send cached statuses immediately — badges visible right away
-        this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
-
-        // Pass 2: fast local-only check (no network fetch) — updates localChanges badge quickly
-        const localStatuses: Record<string, GitStatus> = {};
-        const LOCAL_CONCURRENCY = 4;
-        for (let i = 0; i < projects.length; i += LOCAL_CONCURRENCY) {
-            const batch = projects.slice(i, i + LOCAL_CONCURRENCY);
-            await Promise.allSettled(batch.map(async (p) => {
-                localStatuses[p.id] = await getProjectLocalStatus(p.path, this._cachedGitStatuses[p.id]);
+            // Compute auth status for each account
+            const accountsWithStatus = accounts.map((acc) => ({
+                ...acc,
+                authStatus: this.accounts.getAccountAuthStatus(acc),
             }));
-        }
-        if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
-        this._cachedGitStatuses = { ...this._cachedGitStatuses, ...localStatuses };
-        if (this.view) this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
 
-        // Pass 3: full check with git fetch — updates ahead/behind. A short TTL
-        // coalesces startup, visibility, and store events; the existing 30 s UI
-        // refresh still keeps every badge current.
-        const REMOTE_STATUS_TTL_MS = 25_000;
-        const now = Date.now();
-        const projectsNeedingRemote = projects.filter(
-            (project) => now - (this._remoteStatusCheckedAt[project.id] ?? 0) >= REMOTE_STATUS_TTL_MS
-        );
-        const MAX_CONCURRENT = 2;
-        const remoteStatuses: Record<string, GitStatus> = {};
-        for (let i = 0; i < projectsNeedingRemote.length; i += MAX_CONCURRENT) {
-            const batch = projectsNeedingRemote.slice(i, i + MAX_CONCURRENT);
-            await Promise.allSettled(
-                batch.map(async (p) => {
-                    remoteStatuses[p.id] = await getProjectGitStatus(p.path, localStatuses[p.id]);
-                })
-            );
-        }
+            const activeRepoName = vscode.workspace.workspaceFolders?.[0]?.name ?? '';
 
-        if (Object.keys(remoteStatuses).length > 0) {
-            if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
-            this._cachedGitStatuses = { ...this._cachedGitStatuses, ...remoteStatuses };
-            const checkedAt = Date.now();
-            for (const projectId of Object.keys(remoteStatuses)) {
-                this._remoteStatusCheckedAt[projectId] = checkedAt;
+            // Use cached S3 cred check — avoids keychain reads on every refresh
+            const hasBackupBucket = await this._hasBackupBucket();
+
+            const buildMsg = (gitStatuses: Record<string, GitStatus>) => ({
+                type: 'state',
+                projects,
+                activeRepo,
+                activeRepoName,
+                accounts: accountsWithStatus,
+                activeAccountId: activeAccountId || null,
+                activeProjectId: activeProject?.id || null,
+                gitStatuses,
+                hasBackupBucket,
+            });
+
+            // Pass 1: send cached statuses immediately — badges visible right away
+            this.view?.webview.postMessage(buildMsg(this._cachedGitStatuses));
+
+            // Pass 2: fast local-only check (no network fetch) — updates localChanges badge quickly
+            const localStatuses: Record<string, GitStatus> = {};
+            const LOCAL_CONCURRENCY = 4;
+            for (let i = 0; i < projects.length; i += LOCAL_CONCURRENCY) {
+                if (!this.view?.visible) return;
+                const batch = projects.slice(i, i + LOCAL_CONCURRENCY);
+                await Promise.allSettled(batch.map(async (p) => {
+                    localStatuses[p.id] = await getProjectLocalStatus(p.path, this._cachedGitStatuses[p.id]);
+                }));
             }
+            if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
+            this._cachedGitStatuses = { ...this._cachedGitStatuses, ...localStatuses };
             if (this.view) this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
-        }
+
+            // Pass 3: full check with git fetch — updates ahead/behind. A short TTL
+            // coalesces startup, visibility, and store events; the existing 30 s UI
+            // refresh still keeps every badge current.
+            const REMOTE_STATUS_TTL_MS = 25_000;
+            const now = Date.now();
+            const projectsNeedingRemote = projects.filter(
+                (project) => now - (this._remoteStatusCheckedAt[project.id] ?? 0) >= REMOTE_STATUS_TTL_MS
+            );
+            const MAX_CONCURRENT = 2;
+            const remoteStatuses: Record<string, GitStatus> = {};
+            for (let i = 0; i < projectsNeedingRemote.length; i += MAX_CONCURRENT) {
+                if (!this.view?.visible) return;
+                const batch = projectsNeedingRemote.slice(i, i + MAX_CONCURRENT);
+                await Promise.allSettled(
+                    batch.map(async (p) => {
+                        remoteStatuses[p.id] = await getProjectGitStatus(p.path, localStatuses[p.id]);
+                    })
+                );
+            }
+
+            if (Object.keys(remoteStatuses).length > 0) {
+                if (refreshSeq !== this._statusRefreshSeq || !this.view) return;
+                this._cachedGitStatuses = { ...this._cachedGitStatuses, ...remoteStatuses };
+                const checkedAt = Date.now();
+                for (const projectId of Object.keys(remoteStatuses)) {
+                    this._remoteStatusCheckedAt[projectId] = checkedAt;
+                }
+                if (this.view) this.view.webview.postMessage(buildMsg(this._cachedGitStatuses));
+            }
+        };
+        const pending = (async () => {
+            do {
+                this._refreshQueued = false;
+                await refresh();
+            } while (this._refreshQueued && this.view?.visible);
+        })();
+        this._refreshInFlight = pending;
+        try { await pending; }
+        finally { if (this._refreshInFlight === pending) this._refreshInFlight = undefined; }
     }
 
     /** Keep one OS watcher per saved project. Events are cheap; Git status only
@@ -2868,6 +2913,10 @@ export class GitProvider implements vscode.WebviewViewProvider {
             const projectIds = [...this._dirtyProjectIds];
             this._dirtyProjectIds.clear();
             void (async () => {
+                if (this._refreshInFlight) {
+                    this._refreshQueued = true;
+                    return;
+                }
                 for (const id of projectIds) await this._postLocalProjectState(id);
             })();
         }, 350);
@@ -3344,72 +3393,103 @@ export class GitProvider implements vscode.WebviewViewProvider {
         const manager = new GitProjects(context, store);
         const accounts = new GitAccounts(context, store);
         let panelStatusRefreshSeq = 0;
+        let panelRefreshInFlight: Promise<void> | undefined;
+        let panelRefreshQueued = false;
+        let panelDisposed = false;
+        const panelRemoteCheckedAt = new Map<string, number>();
+        const panelCachedStatuses: Record<string, GitStatus> = {};
 
         const postPanelState = async (localOnlyProjectId?: string, assumeSynced = false) => {
-            const refreshSeq = ++panelStatusRefreshSeq;
-            const projects = manager.listProjects();
-            const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
-            const accountList = accounts.listAccounts();
-            const activeProject = projects.find((p) => p.path === activeRepo);
-            const activeAccountId =
-                activeProject?.accountId ||
-                (activeRepo ? accounts.getLocalAccount(activeRepo)?.id : undefined);
-
-            // Compute auth status for each account
-            const accountsWithStatus = accountList.map((acc) => ({
-                ...acc,
-                authStatus: accounts.getAccountAuthStatus(acc),
-            }));
-
-            const activeRepoName = vscode.workspace.workspaceFolders?.[0]?.name ?? '';
-            const hasBackupBucket = !!(await getS3Credentials(context));
-
-            const buildMsg = (gitStatuses: Record<string, GitStatus>) => ({
-                type: 'state',
-                projects,
-                activeRepo,
-                activeRepoName,
-                accounts: accountsWithStatus,
-                activeAccountId: activeAccountId || null,
-                activeProjectId: activeProject?.id || null,
-                gitStatuses,
-                hasBackupBucket,
-            });
-
-            // Send state immediately so the list updates instantly
-            panel.webview.postMessage(buildMsg({}));
-
-            if (localOnlyProjectId) {
-                const project = projects.find((candidate) => candidate.id === localOnlyProjectId);
-                if (!project) return;
-                const status = await getProjectLocalStatus(project.path);
-                if (assumeSynced) {
-                    status.ahead = 0;
-                    status.behind = 0;
-                }
-                if (refreshSeq !== panelStatusRefreshSeq) return;
-                panel.webview.postMessage({
-                    ...buildMsg({ [project.id]: status }),
-                    onlyProjectId: project.id,
-                });
-                return;
+            if (panelDisposed || !panel.visible) return;
+            if (panelRefreshInFlight) {
+                panelRefreshQueued = true;
+                return panelRefreshInFlight;
             }
+            const refresh = async () => {
+                const refreshSeq = ++panelStatusRefreshSeq;
+                const projects = manager.listProjects();
+                const activeRepo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+                const accountList = accounts.listAccounts();
+                const activeProject = projects.find((p) => p.path === activeRepo);
+                const activeAccountId =
+                    activeProject?.accountId ||
+                    (activeRepo ? accounts.getLocalAccount(activeRepo)?.id : undefined);
 
-            // Then fetch git statuses in background and send again
-            const gitStatuses: Record<string, GitStatus> = {};
-            await Promise.allSettled(
-                projects.map(async (p) => {
-                    gitStatuses[p.id] = await getProjectGitStatus(p.path);
-                })
-            );
+                // Compute auth status for each account
+                const accountsWithStatus = accountList.map((acc) => ({
+                    ...acc,
+                    authStatus: accounts.getAccountAuthStatus(acc),
+                }));
 
-            if (refreshSeq !== panelStatusRefreshSeq) return;
-            panel.webview.postMessage(buildMsg(gitStatuses));
+                const activeRepoName = vscode.workspace.workspaceFolders?.[0]?.name ?? '';
+                const hasBackupBucket = !!(await getS3Credentials(context));
+
+                const buildMsg = (gitStatuses: Record<string, GitStatus>) => ({
+                    type: 'state',
+                    projects,
+                    activeRepo,
+                    activeRepoName,
+                    accounts: accountsWithStatus,
+                    activeAccountId: activeAccountId || null,
+                    activeProjectId: activeProject?.id || null,
+                    gitStatuses,
+                    hasBackupBucket,
+                });
+
+                // Send state immediately so the list updates instantly
+                panel.webview.postMessage(buildMsg(panelCachedStatuses));
+
+                if (localOnlyProjectId) {
+                    const project = projects.find((candidate) => candidate.id === localOnlyProjectId);
+                    if (!project) return;
+                    const status = await getProjectLocalStatus(project.path);
+                    if (assumeSynced) {
+                        status.ahead = 0;
+                        status.behind = 0;
+                    }
+                    if (refreshSeq !== panelStatusRefreshSeq) return;
+                    panel.webview.postMessage({
+                        ...buildMsg({ [project.id]: status }),
+                        onlyProjectId: project.id,
+                    });
+                    return;
+                }
+
+                // Then fetch git statuses in background and send again
+                const gitStatuses: Record<string, GitStatus> = {};
+                for (let i = 0; i < projects.length; i += 2) {
+                    if (panelDisposed || !panel.visible) return;
+                    await Promise.allSettled(projects.slice(i, i + 2).map(async (p) => {
+                        const local = await getProjectLocalStatus(p.path, panelCachedStatuses[p.id]);
+                        if (Date.now() - (panelRemoteCheckedAt.get(p.id) ?? 0) < 25000) {
+                            gitStatuses[p.id] = local;
+                        } else {
+                            gitStatuses[p.id] = await getProjectGitStatus(p.path, local);
+                            panelRemoteCheckedAt.set(p.id, Date.now());
+                        }
+                    }));
+                }
+
+                if (refreshSeq !== panelStatusRefreshSeq) return;
+                Object.assign(panelCachedStatuses, gitStatuses);
+                panel.webview.postMessage(buildMsg(gitStatuses));
+            };
+            const pending = (async () => {
+                do {
+                    panelRefreshQueued = false;
+                    await refresh();
+                    localOnlyProjectId = undefined;
+                } while (panelRefreshQueued && panel.visible && !panelDisposed);
+            })();
+            panelRefreshInFlight = pending;
+            try { await pending; }
+            finally { if (panelRefreshInFlight === pending) panelRefreshInFlight = undefined; }
         };
 
         // Hot-reload when another IDE writes the shared sync file
         store.on('changed', postPanelState);
-        panel.onDidDispose(() => store.off('changed', postPanelState));
+        panel.onDidDispose(() => { panelDisposed = true; store.off('changed', postPanelState); });
+        panel.onDidChangeViewState(() => { if (panel.visible) void postPanelState(); });
 
         /** Prompts user to pick/enter a remote URL for a repo with no remote (panel context). */
         const promptAndAddRemotePanel = async (

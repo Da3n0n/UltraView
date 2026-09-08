@@ -1,62 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Worker } from 'worker_threads';
 import { buildDbHtml } from '../webview/dbHtml';
-
-interface ParsedTable {
-  name: string;
-  columns: { name: string; type: string; pk: number; notnull: number }[];
-  rows: Record<string, unknown>[];
-}
-
-/** Very lightweight SQL dump parser — handles pg_dump / mysqldump / sqlite .sql */
-function parseSqlDump(sql: string): ParsedTable[] {
-  const tables = new Map<string, ParsedTable>();
-
-  // Match CREATE TABLE statements
-  const createRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?(\w+)["'`]?\s*\(([^;]+)\)/gim;
-  let m: RegExpExecArray | null;
-  while ((m = createRe.exec(sql)) !== null) {
-    const name = m[1];
-    const body = m[2];
-    const cols = body
-      .split(/,(?![^()]*\))/)
-      .map((c) => c.trim())
-      .filter((c) => !c.match(/^\s*(PRIMARY|UNIQUE|KEY|INDEX|CONSTRAINT|CHECK|FOREIGN)/i))
-      .map((c) => {
-        const parts = c.trim().split(/\s+/);
-        const colName = parts[0].replace(/["'`]/g, '');
-        const colType = parts[1] ?? 'TEXT';
-        return { name: colName, type: colType, pk: 0, notnull: 0 };
-      })
-      .filter((c) => c.name.length > 0);
-    tables.set(name, { name, columns: cols, rows: [] });
-  }
-
-  // Match INSERT INTO statements (values style)
-  const insertRe = /INSERT\s+INTO\s+["'`]?(\w+)["'`]?\s*(?:\(([^)]+)\))?\s*VALUES\s*((?:\([^)]+\)\s*,?\s*)+)/gim;
-  while ((m = insertRe.exec(sql)) !== null) {
-    const name = m[1];
-    if (!tables.has(name)) { tables.set(name, { name, columns: [], rows: [] }); }
-    const tbl = tables.get(name)!;
-    const colNames = m[2]
-      ? m[2].split(',').map((c) => c.trim().replace(/["'`]/g, ''))
-      : tbl.columns.map((c) => c.name);
-
-    const valBlockRe = /\(([^)]+)\)/g;
-    let vm: RegExpExecArray | null;
-    while ((vm = valBlockRe.exec(m[3])) !== null) {
-      const vals = vm[1].split(/,(?=(?:[^']*'[^']*')*[^']*$)/).map((v) =>
-        v.trim().replace(/^'(.*)'$/, '$1').replace(/^"(.*)"$/, '$1')
-      );
-      const row: Record<string, unknown> = {};
-      colNames.forEach((c, i) => { row[c] = vals[i] ?? null; });
-      tbl.rows.push(row);
-    }
-  }
-
-  return Array.from(tables.values());
-}
 
 export class SqlDumpProvider implements vscode.CustomReadonlyEditorProvider {
   constructor(private readonly ctx: vscode.ExtensionContext) {}
@@ -75,39 +21,49 @@ export class SqlDumpProvider implements vscode.CustomReadonlyEditorProvider {
     };
     const filePath = document.uri.fsPath;
 
-    let parsed: ParsedTable[] | null = null;
-    const getParsed = async () => {
-      if (!parsed) {
-        const sql = await fs.promises.readFile(filePath, 'utf8');
-        parsed = parseSqlDump(sql);
-      }
-      return parsed;
+    const worker = new Worker(path.join(this.ctx.extensionPath, 'dist', 'sqlDump.worker.js'), {
+      workerData: filePath, resourceLimits: { maxOldGenerationSizeMb: 256 },
+    });
+    let nextId = 0;
+    let stopped = false;
+    const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+    worker.on('message', ({ id, result, error }) => {
+      const task = pending.get(id);
+      pending.delete(id);
+      if (error) task?.reject(new Error(error));
+      else task?.resolve(result);
+    });
+    const fail = (error: Error) => {
+      stopped = true;
+      for (const task of pending.values()) task.reject(error);
+      pending.clear();
     };
+    worker.on('error', fail);
+    worker.on('exit', () => fail(new Error('SQL dump reader stopped. The file may exceed the reader memory limit.')));
+    const request = (data: Record<string, unknown>): Promise<any> => {
+      if (stopped) return Promise.reject(new Error('SQL dump reader stopped. Reopen the editor to retry.'));
+      const id = ++nextId;
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+        worker.postMessage({ ...data, id });
+      });
+    };
+    panel.onDidDispose(() => { void worker.terminate(); });
 
     panel.webview.html = buildDbHtml(this.ctx.extensionPath, panel.webview, 'SQL Dump', filePath, path.basename(filePath));
 
     panel.webview.onDidReceiveMessage(async (msg) => {
       try {
-        const tables = await getParsed();
         switch (msg.type) {
           case 'ready': {
-            const schema = tables.map((t) => ({
-              name: t.name,
-              rowCount: t.rows.length,
-              columns: t.columns
-            }));
-            const dbSize = fs.statSync(filePath).size;
+            const schema = await request({});
+            const dbSize = (await fs.promises.stat(filePath)).size;
             panel.webview.postMessage({ type: 'schema', tables: schema, dbSize, sourceLabel: filePath, dbType: 'SQL Dump', dbName: path.basename(filePath) });
             break;
           }
           case 'getTableData': {
-            const tbl = tables.find((t) => t.name === msg.table);
-            if (!tbl) { break; }
-            const pageSize = msg.pageSize ?? 200;
-            const offset = (msg.page ?? 0) * pageSize;
-            const rows = tbl.rows.slice(offset, offset + pageSize);
-            const cols = tbl.columns.length > 0 ? tbl.columns.map((c) => c.name) : rows.length > 0 ? Object.keys(rows[0]) : [];
-            panel.webview.postMessage({ type: 'tableData', table: msg.table, columns: cols, rows, page: msg.page ?? 0 });
+            const { rows, columns } = await request({ table: msg.table, page: msg.page, pageSize: msg.pageSize });
+            panel.webview.postMessage({ type: 'tableData', table: msg.table, columns, rows, page: msg.page ?? 0 });
             break;
           }
           case 'runQuery': {

@@ -1,5 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { isMainThread, Worker } from 'worker_threads';
+
+const scansInFlight = new Map<string, Promise<ProjectCommand[]>>();
 
 export type CommandType = 'npm' | 'just' | 'task' | 'make' | 'python' | 'go' | 'powershell' | 'shell' | 'bun' | 'deno' | 'npx' | 'pnpm';
 
@@ -75,6 +78,31 @@ export interface ProjectCommand {
 export async function scanCommands(rootPath: string): Promise<ProjectCommand[]> {
   if (!rootPath) {
     return [];
+  }
+  if (isMainThread) {
+    const key = path.resolve(rootPath);
+    const existing = scansInFlight.get(key);
+    if (existing) return existing;
+    const pending = new Promise<ProjectCommand[]>((resolve, reject) => {
+      const worker = new Worker(path.join(__dirname, 'commandScanner.worker.js'), { workerData: key });
+      const timeout = setTimeout(() => {
+        reject(new Error('Command discovery timed out.'));
+        void worker.terminate();
+      }, 60_000);
+      worker.once('message', (result: { commands?: ProjectCommand[]; error?: string }) => {
+        clearTimeout(timeout);
+        if (result.error) reject(new Error(result.error));
+        else resolve(result.commands ?? []);
+      });
+      worker.once('error', error => { clearTimeout(timeout); reject(error); });
+      worker.once('exit', code => {
+        clearTimeout(timeout);
+        if (code !== 0) reject(new Error(`Command discovery stopped (${code}).`));
+      });
+    });
+    scansInFlight.set(key, pending);
+    try { return await pending; }
+    finally { if (scansInFlight.get(key) === pending) scansInFlight.delete(key); }
   }
 
   const all: ProjectCommand[] = [];

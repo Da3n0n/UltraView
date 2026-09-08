@@ -973,22 +973,53 @@ function applyFilter() {
 
 // ── Simulation ───────────────────────────────────────────────────────────────
 function tick() {
+  rafId = null;
+  if (document.hidden) { simRunning = false; return; }
   if (alpha > MIN_ALPHA) {
     simulate();
     alpha *= ALPHA_DECAY;
   }
   render();
+  if (alpha > MIN_ALPHA) rafId = requestAnimationFrame(tick);
+  else simRunning = false;
+}
+
+function requestRender() {
+  if (document.hidden || rafId !== null) return;
+  simRunning = true;
   rafId = requestAnimationFrame(tick);
 }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    rafId = null;
+    simRunning = false;
+  } else requestRender();
+});
+for (const event of ['mousemove', 'mousedown', 'mouseup', 'mouseleave', 'wheel', 'gesturechange', 'click', 'input', 'change']) {
+  document.addEventListener(event, requestRender, { passive: true });
+}
+window.addEventListener('resize', requestRender);
+window.addEventListener('message', requestRender);
 
 function simulate() {
   const n = nodes.length;
   const a = alpha;
 
-  // Repulsion (O(n²) with cutoff — fast for <2000 nodes)
+  // A spatial grid skips distant pairs before computing distances.
+  const cells = new Map();
+  for (let i = 0; i < n; i++) {
+    const key = Math.floor(nodes[i].x / REPEL_CUTOFF) + ',' + Math.floor(nodes[i].y / REPEL_CUTOFF);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(i);
+  }
   for (let i = 0; i < n; i++) {
     const ni = nodes[i];
-    for (let j = i + 1; j < n; j++) {
+    const gx = Math.floor(ni.x / REPEL_CUTOFF);
+    const gy = Math.floor(ni.y / REPEL_CUTOFF);
+    for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+    for (const j of cells.get((gx + ox) + ',' + (gy + oy)) || []) {
+      if (j <= i) continue;
       const nj = nodes[j];
       const dx = nj.x - ni.x;
       const dy = nj.y - ni.y;
@@ -1002,6 +1033,7 @@ function simulate() {
     }
   }
 
+  }
   // Spring forces
   for (const e of edges) {
     const A = nodes[e.si];
