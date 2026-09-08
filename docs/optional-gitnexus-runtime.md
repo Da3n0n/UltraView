@@ -11,10 +11,17 @@ Downloads use a pinned HTTPS URL and SHA-256 checksum from
 a lock across VS Code windows, and makes an installation visible only after
 extraction and metadata validation complete.
 
-## Release preparation
+## Normal extension releases
 
-The checked-in manifest currently has no published platform assets. A fresh
-installation therefore cannot download GitNexus until this release step is done:
+The Windows x64 runtime is published and configured in the checked-in manifest.
+Run `npm run package` as usual to bump the patch version and build the small VSIX.
+Feature releases reuse the same download and do not require rebuilding or
+republishing GitNexus. `npm run vsix` packages without bumping the version.
+
+## Updating GitNexus itself
+
+Repeat these steps only when the pinned GitNexus version or its customizations
+change:
 
 1. Run the **Prepare GitNexus runtime release** GitHub Actions workflow. It
    builds Windows x64 and prepares a draft release containing the archive and

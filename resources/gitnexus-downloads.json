@@ -2,5 +2,10 @@
   "version": "1.6.10",
   "commit": "170eefd4a0893be9d255dc3581d51fd448ce2e96",
   "customizationFingerprint": "f29905fdafc5b002c1d0d1d1008132f25a84ee221af12e46ef265bb204545427",
-  "platforms": {}
+  "platforms": {
+    "win32-x64": {
+      "url": "https://github.com/Da3n0n/Ultraview/releases/download/runtime-1.6.10-170eefd4a089-f29905fdafc5/gitnexus-runtime-win32-x64.tar.gz",
+      "sha256": "3d89ac67cb403e34b70b0237e00aec9da22521a7986c9d58c0f4da01bdc0f295"
+    }
+  }
 }
