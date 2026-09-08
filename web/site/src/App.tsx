@@ -5,6 +5,7 @@ import FeaturesSection from './components/FeaturesSection';
 import ToolsSection from './components/ToolsSection';
 import ProjectsSection from './components/ProjectsSection';
 import SecuritySection from './components/SecuritySection';
+import ChangelogSection from './components/ChangelogSection';
 import DocsSection from './components/DocsSection';
 import DownloadSection from './components/DownloadSection';
 import Footer from './components/Footer';
@@ -25,6 +26,7 @@ function App() {
                     <ToolsSection />
                     <ProjectsSection />
                     <SecuritySection />
+                    <ChangelogSection />
                     <DownloadSection />
                 </>
             )}
